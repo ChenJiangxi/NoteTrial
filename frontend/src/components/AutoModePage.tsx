@@ -813,11 +813,11 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
   }), { likes: 0, collects: 0, comments: 0, views: 0 })
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
+    <div className="min-h-screen bg-gray-50 text-gray-900">
       {/* 登录弹窗 */}
       {showLoginModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-xl p-6 max-w-sm w-full mx-4">
+          <div className="bg-white border border-gray-200 rounded-xl p-6 max-w-sm w-full mx-4">
             <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
               <QrCode className="w-5 h-5 text-orange-500" />
               扫码登录小红书
@@ -828,7 +828,7 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
                 <img src={loginQRCode} alt="登录二维码" className="w-full" />
               </div>
             ) : (
-              <div className="bg-gray-700 p-8 rounded-lg mb-4 flex flex-col items-center justify-center">
+              <div className="bg-gray-50 border border-gray-200 p-8 rounded-lg mb-4 flex flex-col items-center justify-center">
                 <Loader2 className="w-8 h-8 animate-spin text-gray-400 mb-2" />
                 <span className="text-sm text-gray-400">加载二维码中...</span>
               </div>
@@ -850,7 +850,7 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
               </button>
               <button
                 onClick={() => setShowLoginModal(false)}
-                className="flex-1 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
+                className="flex-1 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
               >
                 取消
               </button>
@@ -880,10 +880,10 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
       )}
 
       {/* 顶部导航 */}
-      <header className="bg-gray-800 border-b border-gray-700">
+      <header className="bg-white border-b border-gray-200">
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={onBack} className="flex items-center gap-2 text-gray-400 hover:text-white">
+            <button onClick={onBack} className="flex items-center gap-2 text-gray-500 hover:text-gray-700">
               <Home className="w-5 h-5" />
             </button>
             <span className="text-gray-600">|</span>
@@ -904,8 +904,8 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
               }}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-sm ${
                 loginStatus === 'logged_in' ? 'bg-green-900/50 text-green-400' :
-                loginStatus === 'logged_out' ? 'bg-gray-700 text-gray-300 hover:bg-gray-600 cursor-pointer' :
-                'bg-gray-700 text-gray-400'
+                loginStatus === 'logged_out' ? 'bg-gray-100 text-gray-700 hover:bg-gray-200 cursor-pointer' :
+                'bg-gray-100 text-gray-500'
               }`}
             >
               {loginStatus === 'checking' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
@@ -920,8 +920,8 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
             {/* MCP 状态 */}
             <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-sm ${
               mcpStatus === 'connected' ? 'bg-green-900/50 text-green-400' :
-              mcpStatus === 'disconnected' ? 'bg-red-900/50 text-red-400' :
-              'bg-gray-700 text-gray-400'
+              mcpStatus === 'disconnected' ? 'bg-red-50 text-red-600' :
+              'bg-gray-100 text-gray-500'
             }`}>
               {mcpStatus === 'checking' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               {mcpStatus === 'connected' && <CheckCircle2 className="w-3.5 h-3.5" />}
@@ -934,7 +934,7 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
 
       <div className="max-w-6xl mx-auto p-4">
         {/* 状态面板 */}
-        <div className="bg-gray-800 rounded-xl p-6 mb-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-6 mb-4">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-4">
               {/* 运行状态指示器 */}
@@ -953,7 +953,7 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
                   {autoStatus === 'error' && '出现错误'}
                 </div>
                 {autoStatus === 'running' && (
-                  <div className="text-sm text-gray-400">
+                  <div className="text-sm text-gray-500">
                     已完成 {cycleCount} 轮 · 发布 {publishedNotes.length} 篇
                   </div>
                 )}
@@ -1005,7 +1005,7 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
               {(autoStatus === 'running' || autoStatus === 'error') && (
                 <button
                   onClick={handleStop}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-gray-700 text-white rounded-lg font-medium hover:bg-gray-600"
+                  className="flex items-center gap-2 px-4 py-2.5 bg-gray-100 text-gray-800 rounded-lg font-medium hover:bg-gray-200"
                 >
                   <Square className="w-5 h-5" />
                   停止
@@ -1016,10 +1016,10 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
 
           {/* 配置区域 */}
           {showConfig && (
-            <div className="border-t border-gray-700 pt-4 mt-4">
+            <div className="border-t border-gray-200 pt-4 mt-4">
               <button
                 onClick={() => setShowConfig(!showConfig)}
-                className="flex items-center gap-2 text-gray-400 hover:text-white mb-3"
+                className="flex items-center gap-2 text-gray-500 hover:text-gray-700 mb-3"
               >
                 <Settings className="w-4 h-4" />
                 配置
@@ -1029,7 +1029,7 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* 话题输入 */}
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1.5">
+                  <label className="block text-sm text-gray-600 mb-1.5">
                     创作话题 <span className="text-red-400">*</span>
                   </label>
                   <input
@@ -1037,25 +1037,25 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
                     value={topic}
                     onChange={(e) => setTopic(e.target.value)}
                     placeholder="如：护肤、穿搭、美食探店..."
-                    className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg focus:border-orange-500 outline-none"
+                    className="w-full px-4 py-2.5 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-100 focus:border-orange-500 outline-none"
                   />
                 </div>
 
                 {/* 发布间隔 */}
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1.5">发布间隔（分钟）</label>
+                  <label className="block text-sm text-gray-600 mb-1.5">发布间隔（分钟）</label>
                   <input
                     type="number"
                     value={publishInterval}
                     onChange={(e) => setPublishInterval(Math.max(5, parseInt(e.target.value) || 30))}
                     min={5}
-                    className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg focus:border-orange-500 outline-none"
+                    className="w-full px-4 py-2.5 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-100 focus:border-orange-500 outline-none"
                   />
                 </div>
 
                 {/* 素材/参考信息 */}
                 <div className="md:col-span-2">
-                  <label className="block text-sm text-gray-400 mb-1.5">
+                  <label className="block text-sm text-gray-600 mb-1.5">
                     素材/参考信息 <span className="text-gray-500 text-xs">（可选，产品信息、卖点等）</span>
                   </label>
                   <textarea
@@ -1063,13 +1063,13 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
                     onChange={(e) => setMaterialText(e.target.value)}
                     placeholder="粘贴产品资料、品牌信息、个人经历等，AI会参考这些内容创作..."
                     rows={3}
-                    className="w-full px-4 py-2.5 bg-gray-700 border border-gray-600 rounded-lg focus:border-orange-500 outline-none resize-none"
+                    className="w-full px-4 py-2.5 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-100 focus:border-orange-500 outline-none resize-none"
                   />
                 </div>
 
                 {/* 优化目标 */}
                 <div className="md:col-span-2">
-                  <label className="block text-sm text-gray-400 mb-1.5">优化目标</label>
+                  <label className="block text-sm text-gray-600 mb-1.5">优化目标</label>
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(goalLabels).map(([value, label]) => (
                       <button
@@ -1080,7 +1080,7 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
                         className={`px-4 py-2 rounded-lg text-sm transition-all ${
                           goals.includes(value)
                             ? 'bg-orange-600 text-white'
-                            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                            : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
                         }`}
                       >
                         {label}
@@ -1098,19 +1098,19 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
                     >
                       <div className={`w-5 h-5 rounded-full bg-white mt-0.5 transition-transform ${autoPublish ? 'translate-x-6' : 'translate-x-0.5'}`} />
                     </div>
-                    <span className="text-sm text-gray-300">自动发布到小红书</span>
+                    <span className="text-sm text-gray-700">自动发布到小红书</span>
                   </label>
                 </div>
                 
                 {/* P0 智能优化功能开关 */}
-                <div className="md:col-span-2 mt-2 pt-4 border-t border-gray-700">
-                  <h4 className="text-sm text-gray-400 mb-3 flex items-center gap-2">
+                <div className="md:col-span-2 mt-2 pt-4 border-t border-gray-200">
+                  <h4 className="text-sm text-gray-600 mb-3 flex items-center gap-2">
                     <Zap className="w-4 h-4 text-yellow-500" />
                     智能优化功能
                   </h4>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     {/* 学习引擎 */}
-                    <label className="flex items-center gap-3 cursor-pointer bg-gray-700/50 p-3 rounded-lg hover:bg-gray-700 transition-colors">
+                    <label className="flex items-center gap-3 cursor-pointer bg-gray-50 border border-gray-200 p-3 rounded-lg hover:bg-gray-100 transition-colors">
                       <div 
                         onClick={() => setUseLearning(!useLearning)}
                         className={`w-10 h-5 rounded-full transition-colors cursor-pointer ${useLearning ? 'bg-purple-600' : 'bg-gray-600'}`}
@@ -1120,14 +1120,14 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
                       <div className="flex-1">
                         <div className="flex items-center gap-1.5">
                           <Brain className="w-3.5 h-3.5 text-purple-400" />
-                          <span className="text-sm text-gray-200">学习引擎</span>
+                          <span className="text-sm text-gray-800">学习引擎</span>
                         </div>
                         <span className="text-xs text-gray-500">从发布效果中学习</span>
                       </div>
                     </label>
                     
                     {/* 多样性控制 */}
-                    <label className="flex items-center gap-3 cursor-pointer bg-gray-700/50 p-3 rounded-lg hover:bg-gray-700 transition-colors">
+                    <label className="flex items-center gap-3 cursor-pointer bg-gray-50 border border-gray-200 p-3 rounded-lg hover:bg-gray-100 transition-colors">
                       <div 
                         onClick={() => setCheckDiversity(!checkDiversity)}
                         className={`w-10 h-5 rounded-full transition-colors cursor-pointer ${checkDiversity ? 'bg-blue-600' : 'bg-gray-600'}`}
@@ -1137,14 +1137,14 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
                       <div className="flex-1">
                         <div className="flex items-center gap-1.5">
                           <Shuffle className="w-3.5 h-3.5 text-blue-400" />
-                          <span className="text-sm text-gray-200">去重机制</span>
+                          <span className="text-sm text-gray-800">去重机制</span>
                         </div>
                         <span className="text-xs text-gray-500">避免重复内容</span>
                       </div>
                     </label>
                     
                     {/* AI检测规避 */}
-                    <label className="flex items-center gap-3 cursor-pointer bg-gray-700/50 p-3 rounded-lg hover:bg-gray-700 transition-colors">
+                    <label className="flex items-center gap-3 cursor-pointer bg-gray-50 border border-gray-200 p-3 rounded-lg hover:bg-gray-100 transition-colors">
                       <div 
                         onClick={() => setUseHumanize(!useHumanize)}
                         className={`w-10 h-5 rounded-full transition-colors cursor-pointer ${useHumanize ? 'bg-green-600' : 'bg-gray-600'}`}
@@ -1154,7 +1154,7 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
                       <div className="flex-1">
                         <div className="flex items-center gap-1.5">
                           <Shield className="w-3.5 h-3.5 text-green-400" />
-                          <span className="text-sm text-gray-200">降AI味</span>
+                          <span className="text-sm text-gray-800">降AI味</span>
                         </div>
                         <span className="text-xs text-gray-500">更像真人写作</span>
                       </div>
@@ -1163,7 +1163,7 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
                   
                   {/* P0 统计面板 */}
                   {(learningStats || diversityStats || humannessScore !== null) && (
-                    <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
+                    <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
                       <div className="grid grid-cols-3 gap-3 text-center">
                         {learningStats && (
                           <div>
@@ -1196,14 +1196,14 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* 左侧：运行日志 */}
-          <div className="lg:col-span-2 bg-gray-800 rounded-xl p-4">
+          <div className="lg:col-span-2 bg-white border border-gray-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-medium flex items-center gap-2">
                 <Clock className="w-4 h-4 text-orange-500" />
                 运行日志
               </h3>
               {logs.length > 0 && (
-                <button onClick={() => setLogs([])} className="text-xs text-gray-500 hover:text-gray-300">
+                <button onClick={() => setLogs([])} className="text-xs text-gray-500 hover:text-gray-700">
                   清空
                 </button>
               )}
@@ -1211,7 +1211,7 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
             
             <div 
               ref={logRef}
-              className="font-mono text-sm text-gray-300 space-y-1 h-64 overflow-y-auto bg-gray-900 rounded-lg p-3"
+              className="font-mono text-sm text-gray-700 space-y-1 h-64 overflow-y-auto bg-gray-50 border border-gray-200 rounded-lg p-3"
             >
               {logs.length === 0 ? (
                 <div className="text-gray-500 text-center py-8">
@@ -1231,8 +1231,8 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
 
             {/* 当前生成的内容预览 - 小红书风格卡片 */}
             {currentContent && (
-              <div className="mt-4 p-4 bg-gray-900 rounded-lg">
-                <h4 className="text-sm text-gray-400 mb-3 flex items-center gap-2">
+              <div className="mt-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                <h4 className="text-sm text-gray-600 mb-3 flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-orange-500" />
                   最新生成 · 小红书预览
                 </h4>
@@ -1300,7 +1300,7 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
           {/* 右侧：数据统计 */}
           <div className="space-y-4">
             {/* 总数据 */}
-            <div className="bg-gray-800 rounded-xl p-4">
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-medium flex items-center gap-2">
                   <BarChart3 className="w-4 h-4 text-orange-500" />
@@ -1308,30 +1308,30 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
                 </h3>
                 <button
                   onClick={refreshAllStats}
-                  className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded"
+                  className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
                 >
                   <RefreshCw className="w-4 h-4" />
                 </button>
               </div>
               
               <div className="grid grid-cols-2 gap-3">
-                <div className="bg-gray-900 rounded-lg p-3 text-center">
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
                   <div className="text-2xl font-bold text-orange-500">{publishedNotes.length}</div>
                   <div className="text-xs text-gray-400">已发布</div>
                 </div>
-                <div className="bg-gray-900 rounded-lg p-3 text-center">
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
                   <div className="text-2xl font-bold">{totalStats.likes}</div>
                   <div className="text-xs text-gray-400 flex items-center justify-center gap-1">
                     <ThumbsUp className="w-3 h-3" /> 点赞
                   </div>
                 </div>
-                <div className="bg-gray-900 rounded-lg p-3 text-center">
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
                   <div className="text-2xl font-bold">{totalStats.collects}</div>
                   <div className="text-xs text-gray-400 flex items-center justify-center gap-1">
                     <Bookmark className="w-3 h-3" /> 收藏
                   </div>
                 </div>
-                <div className="bg-gray-900 rounded-lg p-3 text-center">
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
                   <div className="text-2xl font-bold">{totalStats.views}</div>
                   <div className="text-xs text-gray-400 flex items-center justify-center gap-1">
                     <Eye className="w-3 h-3" /> 浏览
@@ -1341,7 +1341,7 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
             </div>
 
             {/* 发布历史 */}
-            <div className="bg-gray-800 rounded-xl p-4">
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
               <h3 className="font-medium flex items-center gap-2 mb-3">
                 <TrendingUp className="w-4 h-4 text-orange-500" />
                 最近发布
@@ -1357,7 +1357,7 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
                   {publishedNotes.slice(0, 10).map(note => (
                     <div 
                       key={note.id} 
-                      className="p-3 bg-gray-900 rounded-lg cursor-pointer hover:bg-gray-850"
+                      className="p-3 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-100"
                       onClick={() => refreshNoteStats(note)}
                     >
                       <div className="text-sm font-medium truncate">{note.content.title}</div>

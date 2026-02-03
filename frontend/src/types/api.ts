@@ -42,6 +42,7 @@ export interface ABTestRequest {
   content_a: ContentItem
   content_b: ContentItem
   max_users: number
+  audience_tags?: string[]
 }
 
 export interface PersonaSimulationResult {

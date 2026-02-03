@@ -30,19 +30,29 @@ class AudienceSimulator:
         )
         self.model = model or settings.default_model
     
-    def _generate_personas(self, task_spec: TaskSpec, count: int = 10) -> List[Dict[str, str]]:
+    def _generate_personas(
+        self,
+        task_spec: TaskSpec,
+        count: int = 5,
+        audience_tags: List[str] = None
+    ) -> List[Dict[str, str]]:
         """根据任务规格生成多样化的用户画像"""
+        if audience_tags:
+            personas = []
+            for i, tag in enumerate(audience_tags, 1):
+                personas.append({
+                    "id": f"tag{i}",
+                    "type": tag,
+                    "desc": f"{tag}相关人群的反馈视角"
+                })
+            return personas[:count]
+
         base_personas = [
-            {"id": "p1", "type": "核心受众", "desc": f"对{task_spec.topic or task_spec.audience}高度感兴趣的深度用户"},
-            {"id": "p2", "type": "边缘受众", "desc": f"对{task_spec.topic or '该话题'}有轻度兴趣的普通用户"},
-            {"id": "p3", "type": "专业人士", "desc": f"在{task_spec.audience}领域有专业背景的用户"},
-            {"id": "p4", "type": "新手小白", "desc": f"刚开始关注{task_spec.topic or '该领域'}的入门用户"},
-            {"id": "p5", "type": "内容创作者", "desc": "同样在小红书创作内容的博主"},
-            {"id": "p6", "type": "随意浏览", "desc": "无明确目的刷小红书的休闲用户"},
-            {"id": "p7", "type": "种草党", "desc": "喜欢收藏可执行内容的实用主义者"},
-            {"id": "p8", "type": "围观党", "desc": "喜欢看热闹但很少互动的潜水用户"},
-            {"id": "p9", "type": "评论达人", "desc": "喜欢在评论区发表观点的活跃用户"},
-            {"id": "p10", "type": "分享达人", "desc": "看到好内容喜欢转发给朋友的用户"},
+            {"id": "p1", "type": "核心用户", "desc": f"对{task_spec.topic or task_spec.audience}有明确需求，愿意深读"},
+            {"id": "p2", "type": "泛兴趣用户", "desc": f"对{task_spec.topic or '该话题'}有一般兴趣，互动意愿中等"},
+            {"id": "p3", "type": "实用派", "desc": "重视可执行和性价比，倾向收藏干货、清单和避坑信息"},
+            {"id": "p4", "type": "互动派", "desc": "表达意愿较强，愿意评论、提问和交流"},
+            {"id": "p5", "type": "传播派", "desc": "遇到有价值或有话题内容时，愿意转发分享"},
         ]
         return base_personas[:count]
     
@@ -141,6 +151,7 @@ class AudienceSimulator:
         content_a: ContentItem,
         content_b: ContentItem,
         max_users: int = 20,
+        audience_tags: List[str] = None,
         calibration_hints: List[str] = None,
         on_progress: callable = None
     ) -> CrowdTestResult:
@@ -155,11 +166,14 @@ class AudienceSimulator:
             calibration_hints: 平台校准提示
             on_progress: 进度回调函数
         """
-        personas = self._generate_personas(task_spec, min(max_users, 10))
-        
-        # 计算每个persona需要模拟的次数
-        runs_per_persona = max(1, max_users // len(personas))
-        
+        tag_list = [t.strip() for t in (audience_tags or []) if t and t.strip()]
+        if tag_list:
+            personas = self._generate_personas(task_spec, len(tag_list), tag_list)
+            runs_per_persona = 3
+        else:
+            personas = self._generate_personas(task_spec, min(max_users, 5))
+            runs_per_persona = max(1, max_users // len(personas))
+
         all_results_a: List[PersonaSimulationResult] = []
         all_results_b: List[PersonaSimulationResult] = []
         
@@ -236,6 +250,10 @@ class AudienceSimulator:
         """计算统计置信度 (基于 viral-predictor 的逻辑)"""
         if vote_a == 0 and vote_b == 0:
             return StatisticalConfidence(winner="-", confidence=0.0)
+        
+        # 平票时不偏向任一版本
+        if vote_a == vote_b:
+            return StatisticalConfidence(winner="-", confidence=50.0)
         
         if vote_a == 0:
             return StatisticalConfidence(winner="B", confidence=100.0)

@@ -5,7 +5,7 @@ import {
   Layout, Smartphone, ChevronRight, UserCircle2, BarChart3, GripVertical, Home
 } from 'lucide-react'
 import { useApp } from './contexts/AppContext'
-import { healthCheck, sendChatMessage, generateVariant, searchImages, runCrowdTest, publishContent } from './services/api'
+import { healthCheck, sendChatMessage, generateVariant, startCrowdTest, getCrowdTestProgress, publishContent } from './services/api'
 import type { ContentItem, CrowdTestResult } from './types/api'
 import WelcomePage from './components/WelcomePage'
 import AutoModePage from './components/AutoModePage'
@@ -80,7 +80,12 @@ function App() {
   const [isGeneratingB, setIsGeneratingB] = useState(false)
   const [testResult, setTestResult] = useState<CrowdTestResult | null>(null)
   const [isRunningTest, setIsRunningTest] = useState(false)
+  const [simulationProgress, setSimulationProgress] = useState(0)
   const [isPublishing, setIsPublishing] = useState(false)
+  const audiencePresets = ['核心用户', '泛兴趣用户', '实用派', '互动派', '传播派']
+  const [selectedAudienceTags, setSelectedAudienceTags] = useState<string[]>(audiencePresets)
+  const [customAudienceInput, setCustomAudienceInput] = useState('')
+  const [customAudienceTags, setCustomAudienceTags] = useState<string[]>([])
   const [uploadedFile, setUploadedFile] = useState<{ name: string; content: string } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -214,20 +219,65 @@ function App() {
   const handleRunTest = async () => {
     if (!taskSpec || !contentA.title || !contentB.title) return
     setIsRunningTest(true)
+    setSimulationProgress(0)
     setTestResult(null)
     try {
-      const result = await runCrowdTest({
-        task_spec: taskSpec,
+      const audienceOverrides = [
+        ...selectedAudienceTags,
+        ...customAudienceTags,
+      ]
+      const taskSpecForTest = audienceOverrides.length
+        ? { ...taskSpec, audience: audienceOverrides.join(' / ') }
+        : taskSpec
+
+      const payload = {
+        task_spec: taskSpecForTest,
         content_a: contentA,
         content_b: contentB,
         max_users: 20,
-      })
-      setTestResult(result)
+        audience_tags: audienceOverrides,
+      }
+
+      const started = await startCrowdTest(payload)
+      const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+      while (true) {
+        await sleep(400)
+        const progress = await getCrowdTestProgress(started.job_id)
+        setSimulationProgress(progress.progress ?? 0)
+
+        if (progress.status === 'completed' && progress.result) {
+          setSimulationProgress(100)
+          setTestResult(progress.result)
+          break
+        }
+
+        if (progress.status === 'failed') {
+          throw new Error(progress.error || '模拟测试失败')
+        }
+      }
     } catch (error) {
       console.error('测试失败:', error)
     } finally {
       setIsRunningTest(false)
     }
+  }
+
+  const toggleAudienceTag = (tag: string) => {
+    setSelectedAudienceTags(prev => (
+      prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+    ))
+  }
+
+  const addCustomAudienceTag = () => {
+    const tag = customAudienceInput.trim()
+    if (!tag) return
+    setCustomAudienceTags(prev => (prev.includes(tag) ? prev : [...prev, tag]))
+    setCustomAudienceInput('')
+  }
+
+  const removeCustomAudienceTag = (tag: string) => {
+    setCustomAudienceTags(prev => prev.filter(t => t !== tag))
   }
 
   // 发布
@@ -524,14 +574,84 @@ function App() {
             <div className="flex-1 overflow-y-auto p-5 scrollbar-thin scrollbar-thumb-slate-200">
               <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 mb-6">
                 <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">操作</h3>
+                <div className="mb-3">
+                  <p className="text-xs text-slate-500 mb-2">默认测试人群标签（可多选）</p>
+                  <div className="flex flex-wrap gap-2">
+                    {audiencePresets.map(tag => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => toggleAudienceTag(tag)}
+                        className={`px-2.5 py-1 text-xs rounded-full border transition-all ${
+                          selectedAudienceTags.includes(tag)
+                            ? 'bg-red-50 border-red-300 text-[#ff2442]'
+                            : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="mb-3">
+                  <p className="text-xs text-slate-500 mb-2">自定义测试人群（可选）</p>
+                  <div className="flex gap-2">
+                    <input
+                      value={customAudienceInput}
+                      onChange={(e) => setCustomAudienceInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          addCustomAudienceTag()
+                        }
+                      }}
+                      placeholder="例如：一线城市25-30岁职业女性"
+                      className="flex-1 px-3 py-2 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442]"
+                    />
+                    <button
+                      type="button"
+                      onClick={addCustomAudienceTag}
+                      className="px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+                    >
+                      添加
+                    </button>
+                  </div>
+                  {customAudienceTags.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {customAudienceTags.map(tag => (
+                        <span
+                          key={tag}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-full bg-white border border-slate-200 text-slate-600"
+                        >
+                          {tag}
+                          <button
+                            type="button"
+                            onClick={() => removeCustomAudienceTag(tag)}
+                            className="text-slate-400 hover:text-slate-600"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <button
                   onClick={handleRunTest}
                   disabled={!contentA.title || !contentB.title || isRunningTest}
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#ff2442] text-white text-sm font-medium rounded-lg hover:bg-[#e61f3d] shadow-sm shadow-red-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isRunningTest ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
-                  {isRunningTest ? '正在模拟用户反馈...' : '运行 A/B 测试'}
+                  {isRunningTest ? `模拟测试中 ${simulationProgress}%` : '运行 A/B 测试'}
                 </button>
+                {isRunningTest && (
+                  <div className="mt-2 h-2 w-full bg-red-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-[#ff2442] transition-all duration-300"
+                      style={{ width: `${simulationProgress}%` }}
+                    />
+                  </div>
+                )}
               </div>
 
               {testResult ? (
@@ -831,21 +951,29 @@ function TestResultPanel({ result }: { result: CrowdTestResult }) {
              <span className="text-xs font-bold uppercase tracking-wide">获胜版本</span>
         </div>
         <div className="text-2xl font-bold mb-1">
-          Version {result.like_confidence.winner}
+          Version {result.overall_confidence.winner}
         </div>
         <div className="text-xs opacity-80 leading-relaxed">
-          点击率优于对照组 {(result.like_confidence.confidence * 100).toFixed(0)}%
+          综合表现优于对照组 {result.overall_confidence.confidence.toFixed(0)}%
         </div>
       </div>
 
        {/* Detailed Stats */}
-       <div className="space-y-3">
-         <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
-            <BarChart3 className="w-3 h-3" /> 数据对比
-         </h4>
-         <StatBar label="点赞数 (Likes)" scoreA={result.version_a_score.like_count} scoreB={result.version_b_score.like_count} max={20} />
-         <StatBar label="收藏数 (Saves)" scoreA={result.version_a_score.save_count} scoreB={result.version_b_score.save_count} max={20} />
-       </div>
+        <div className="space-y-3">
+          <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
+             <BarChart3 className="w-3 h-3" /> 数据对比
+          </h4>
+         <StatBar label="点赞数 (Likes)" scoreA={result.version_a_score.like_count} scoreB={result.version_b_score.like_count} totalUsers={result.persona_results.length} />
+         <StatBar label="收藏数 (Saves)" scoreA={result.version_a_score.save_count} scoreB={result.version_b_score.save_count} totalUsers={result.persona_results.length} />
+          <StatBar label="评论数 (Comments)" scoreA={result.version_a_score.comment_count} scoreB={result.version_b_score.comment_count} totalUsers={result.persona_results.length} />
+          <StatBar label="分享数 (Shares)" scoreA={result.version_a_score.share_count} scoreB={result.version_b_score.share_count} totalUsers={result.persona_results.length} />
+          <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-xs text-slate-600 flex items-center justify-between">
+            <span>总体置信度 (Overall)</span>
+            <span className="font-semibold text-slate-700">
+              Version {result.overall_confidence.winner} · {result.overall_confidence.confidence.toFixed(0)}%
+            </span>
+          </div>
+        </div>
        
        {/* 模拟用户反馈 */}
        <div className="space-y-3">
@@ -869,7 +997,7 @@ function TestResultPanel({ result }: { result: CrowdTestResult }) {
           <h4 className="text-xs font-semibold text-amber-700 mb-1">改进建议</h4>
           <ul className="list-disc pl-4 space-y-1">
              {result.diagnosis.slice(0,3).map((d, i) => (
-                <li key={i} className="text-[10px] text-amber-600 leading-tight">{d}</li>
+                <li key={i} className="text-xs text-amber-700 leading-normal">{d}</li>
              ))}
           </ul>
        </div>
@@ -877,9 +1005,10 @@ function TestResultPanel({ result }: { result: CrowdTestResult }) {
   )
 }
 
-function StatBar({ label, scoreA, scoreB, max }: { label: string, scoreA: number, scoreB: number, max: number }) {
-  const pA = (scoreA / max) * 100
-  const pB = (scoreB / max) * 100
+function StatBar({ label, scoreA, scoreB, totalUsers }: { label: string, scoreA: number, scoreB: number, totalUsers: number }) {
+  const base = Math.max(totalUsers, 1)
+  const pA = (scoreA / base) * 100
+  const pB = (scoreB / base) * 100
   
   return (
     <div className="bg-white border focus-within:ring-1 border-slate-100 rounded-lg p-3 shadow-sm">
@@ -893,7 +1022,7 @@ function StatBar({ label, scoreA, scoreB, max }: { label: string, scoreA: number
            <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
              <div style={{ width: `${pA}%` }} className="h-full bg-blue-500 rounded-full" />
            </div>
-           <span className="text-[10px] w-4 text-blue-600 text-right">{scoreA}</span>
+           <span className="text-[10px] w-10 text-blue-600 text-right">{pA.toFixed(0)}%</span>
         </div>
         {/* B Version */}
         <div className="flex items-center gap-2">
@@ -901,7 +1030,7 @@ function StatBar({ label, scoreA, scoreB, max }: { label: string, scoreA: number
            <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
              <div style={{ width: `${pB}%` }} className="h-full bg-[#ff2442] rounded-full" />
            </div>
-           <span className="text-[10px] w-5 text-[#ff2442] font-bold text-right">{scoreB}</span>
+           <span className="text-[10px] w-10 text-[#ff2442] font-bold text-right">{pB.toFixed(0)}%</span>
         </div>
       </div>
     </div>

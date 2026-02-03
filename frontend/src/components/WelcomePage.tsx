@@ -79,7 +79,7 @@ export default function WelcomePage({ onSelectMode }: WelcomePageProps) {
                 </div>
                 <div className="flex items-center gap-3 text-gray-600">
                   <CheckCircle2 className="w-5 h-5 text-blue-500" />
-                  <span>5种用户画像模拟投票</span>
+                  <span>多种目标用户画像模拟投票</span>
                 </div>
                 <div className="flex items-center gap-3 text-gray-600">
                   <CheckCircle2 className="w-5 h-5 text-blue-500" />

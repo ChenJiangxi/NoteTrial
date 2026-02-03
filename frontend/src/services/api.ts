@@ -33,6 +33,27 @@ export async function runCrowdTest(request: ABTestRequest): Promise<CrowdTestRes
   return response.data
 }
 
+// 启动带进度的 CrowdTest 任务
+export async function startCrowdTest(request: ABTestRequest): Promise<{
+  job_id: string
+  status: 'running'
+}> {
+  const response = await api.post('/crowdtest/start', request)
+  return response.data
+}
+
+// 查询 CrowdTest 任务进度
+export async function getCrowdTestProgress(jobId: string): Promise<{
+  job_id: string
+  status: 'running' | 'completed' | 'failed'
+  progress: number
+  result?: CrowdTestResult
+  error?: string
+}> {
+  const response = await api.get(`/crowdtest/progress/${jobId}`)
+  return response.data
+}
+
 // 改进内容
 export async function improveContent(
   content: ContentItem,

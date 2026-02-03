@@ -4,8 +4,10 @@ NoteTrial Backend - FastAPI 主应用
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, Dict, Any
 from pydantic import BaseModel
+import asyncio
+import uuid
 
 from .config import get_settings
 from .models import (
@@ -32,6 +34,7 @@ learning_engine: Optional[LearningEngine] = None
 diversity_controller: Optional[DiversityController] = None
 auto_monitor: Optional[AutoMonitor] = None
 humanize_service: Optional[HumanizeService] = None
+crowdtest_jobs: Dict[str, Dict[str, Any]] = {}
 
 
 @asynccontextmanager
@@ -189,6 +192,78 @@ async def generate_variant(request: GenerateVariantRequest):
     return variant
 
 
+async def _get_crowdtest_calibration_hints(task_spec: TaskSpec) -> list[str]:
+    """获取 CrowdTest 的平台校准提示（MCP 可用时）"""
+    if not calibrator or not task_spec.topic:
+        return []
+    try:
+        calibration_data = await calibrator.get_calibration_data(task_spec.topic)
+        return calibrator.generate_calibration_hints(calibration_data)
+    except Exception as e:
+        print(f"校准数据获取失败，使用默认配置: {e}")
+        return []
+
+
+@app.post("/api/crowdtest/start")
+async def start_crowdtest(request: ABTestRequest):
+    """启动带进度的 CrowdTest 异步任务"""
+    if not simulator or not calibrator:
+        raise HTTPException(status_code=500, detail="服务未初始化")
+
+    job_id = str(uuid.uuid4())
+    crowdtest_jobs[job_id] = {
+        "status": "running",
+        "progress": 0,
+        "result": None,
+        "error": None,
+    }
+
+    async def on_progress(completed: int, total: int):
+        job = crowdtest_jobs.get(job_id)
+        if not job:
+            return
+        total_safe = max(total, 1)
+        pct = int((completed / total_safe) * 100)
+        job["progress"] = min(99, max(0, pct))
+
+    async def worker():
+        try:
+            calibration_hints = await _get_crowdtest_calibration_hints(request.task_spec)
+            result = await simulator.simulate_ab_test(
+                task_spec=request.task_spec,
+                content_a=request.content_a,
+                content_b=request.content_b,
+                max_users=request.max_users,
+                audience_tags=request.audience_tags,
+                calibration_hints=calibration_hints,
+                on_progress=on_progress,
+            )
+            crowdtest_jobs[job_id]["status"] = "completed"
+            crowdtest_jobs[job_id]["progress"] = 100
+            crowdtest_jobs[job_id]["result"] = result.model_dump()
+        except Exception as e:
+            crowdtest_jobs[job_id]["status"] = "failed"
+            crowdtest_jobs[job_id]["error"] = str(e)
+
+    asyncio.create_task(worker())
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/api/crowdtest/progress/{job_id}")
+async def get_crowdtest_progress(job_id: str):
+    """查询 CrowdTest 异步任务进度"""
+    job = crowdtest_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "progress": job["progress"],
+        "result": job["result"],
+        "error": job["error"],
+    }
+
+
 @app.post("/api/crowdtest", response_model=CrowdTestResult)
 async def run_crowdtest(request: ABTestRequest):
     """
@@ -205,13 +280,7 @@ async def run_crowdtest(request: ABTestRequest):
         raise HTTPException(status_code=500, detail="服务未初始化")
     
     # 获取校准数据
-    calibration_hints = []
-    if request.task_spec.topic:
-        try:
-            calibration_data = await calibrator.get_calibration_data(request.task_spec.topic)
-            calibration_hints = calibrator.generate_calibration_hints(calibration_data)
-        except Exception as e:
-            print(f"校准数据获取失败，使用默认配置: {e}")
+    calibration_hints = await _get_crowdtest_calibration_hints(request.task_spec)
     
     # 执行A/B测试模拟
     result = await simulator.simulate_ab_test(
@@ -219,6 +288,7 @@ async def run_crowdtest(request: ABTestRequest):
         content_a=request.content_a,
         content_b=request.content_b,
         max_users=request.max_users,
+        audience_tags=request.audience_tags,
         calibration_hints=calibration_hints
     )
     

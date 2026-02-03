@@ -43,6 +43,7 @@ class ABTestRequest(BaseModel):
     content_a: ContentItem
     content_b: ContentItem
     max_users: int = Field(default=20, ge=5, le=100, description="模拟用户数量")
+    audience_tags: Optional[List[str]] = Field(default=None, description="前端选择的测试人群标签")
 
 
 class PersonaSimulationResult(BaseModel):
