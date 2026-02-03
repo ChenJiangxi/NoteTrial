@@ -78,15 +78,15 @@ class ContentGenerator:
         "topic": "选题/话题"
     }},
     "generated_content": {{  // 如果用户要求生成内容
-        "title": "标题（不超过20字）",
-        "body": "正文（不超过1000字）",
+        "title": "标题（严格≤20字，数清楚再输出）",
+        "body": "正文（严格≤1000字）",
         "tags": ["标签1", "标签2"]
     }}
 }}
 
-重要规则：
-1. 小红书标题不能超过20字
-2. 正文不能超过1000字
+【绝对不可违反的规则】：
+1. 标题严格限制在20字以内（含标点和emoji，超过必须删减）
+2. 正文严格限制在1000字以内
 3. goals字段是数组，可以有多个目标。可选值：maximize_save（收藏）、maximize_like（点赞）、maximize_comment（评论）、maximize_share（分享）
 4. 如果用户没有明确说优化目标，默认为["maximize_save"]（收藏率）
 5. 保持对话自然，不要一次问太多问题
@@ -220,14 +220,14 @@ class ContentGenerator:
 
 请输出JSON格式：
 {{
-    "title": "新标题（不超过20字，要有吸引力）",
-    "body": "新正文（不超过1000字，口语化、有节奏感）",
+    "title": "新标题（严格≤20字，含标点emoji）",
+    "body": "新正文（≤1000字，口语化、有节奏感）",
     "tags": ["标签1", "标签2", "标签3"]
 }}
 
-重要：
-1. 标题必须不超过20字
-2. 正文必须不超过1000字
+【绝对不可违反的规则】：
+1. 标题严格≤20字（含标点、emoji、空格，多了就删）
+2. 正文严格≤1000字
 3. 内容要像真人写的，避免AI味
 """
         
@@ -305,3 +305,121 @@ class ContentGenerator:
             
         except Exception as e:
             return content
+
+    async def generate_authentic_content(
+        self,
+        task_spec: TaskSpec,
+        reference_samples: List[dict] = None,
+        calibration_data = None,
+        extra_hints: List[str] = None
+    ) -> ContentItem:
+        """
+        生成真实风格的小红书内容（低AI味）
+        
+        通过学习真实爆款内容的风格来生成
+        
+        Args:
+            task_spec: 任务规格
+            reference_samples: 参考样本
+            calibration_data: 校准数据
+            extra_hints: 额外的优化提示（来自学习引擎、多样性控制器等）
+        """
+        # 构建参考内容样本
+        reference_text = ""
+        if reference_samples:
+            samples = []
+            for i, sample in enumerate(reference_samples[:8], 1):
+                note_card = sample.get("noteCard", {})
+                title = note_card.get("displayTitle", sample.get("title", ""))
+                desc = note_card.get("desc", sample.get("desc", ""))
+                interact = note_card.get("interactInfo", {})
+                likes = interact.get("likedCount", "0")
+                collects = interact.get("collectedCount", "0")
+                
+                if title:
+                    samples.append(f"""
+【样本{i}】点赞:{likes} 收藏:{collects}
+标题：{title}
+内容：{desc[:200] if desc else '(无)'}
+""")
+            reference_text = "\n".join(samples)
+        
+        # 构建校准提示
+        calibration_text = ""
+        if calibration_data:
+            calibration_text = f"""
+【该话题的成功规律】
+- 标题平均长度：{calibration_data.avg_title_length:.0f}字
+- 常用开头模式：{', '.join(calibration_data.common_opening_patterns[:3])}
+- Emoji使用率：{int(calibration_data.emoji_usage_rate * 100)}%
+- 热门标签：{', '.join(calibration_data.common_tags[:5])}
+"""
+        
+        # P0: 构建额外优化提示
+        extra_hints_text = ""
+        if extra_hints:
+            valid_hints = [h for h in extra_hints if h and h.strip()]
+            if valid_hints:
+                extra_hints_text = "\n【优化建议（来自学习系统）】\n" + "\n".join(valid_hints)
+        
+        goals_str = ', '.join([
+            {'maximize_save': '高收藏', 'maximize_like': '高点赞', 
+             'maximize_comment': '高评论', 'maximize_share': '高分享'}
+             .get(g.value, g.value) for g in task_spec.goals
+        ])
+        
+        prompt = f"""你是小红书爆款内容创作专家。现在需要创作一篇关于「{task_spec.topic}」的笔记。
+
+【创作要求】
+- 目标受众：{task_spec.audience}
+- 优化目标：{goals_str}
+- 语气约束：{', '.join(task_spec.tone_constraints) if task_spec.tone_constraints else '真实、不营销'}
+
+{calibration_text}
+{extra_hints_text}
+
+【真实爆款参考】（学习这些内容的风格和表达方式，不要抄袭）
+{reference_text if reference_text else '暂无参考样本，请按照小红书真实用户的风格创作'}
+
+【重要创作原则】
+1. 模仿真实用户的口吻，像朋友分享一样写作
+2. 使用小红书特有的表达（如：绝绝子、yyds、姐妹们、真的会谢）
+3. 适当使用emoji，但不要过度
+4. 标题要有吸引力，可用数字、问句、感叹句
+5. 内容要有干货，让人想收藏
+6. 不要有明显的AI痕迹，不要太书面化
+
+【绝对不可违反的硬性规则】
+⚠️ 标题严格限制≤20字（含所有标点、emoji、空格，必须数清楚！）
+⚠️ 正文严格限制≤1000字
+
+请用JSON格式输出：
+{{
+    "title": "吸引人的标题（严格≤20字，数清楚再输出）",
+    "body": "正文内容（分段有结构，≤1000字）",
+    "tags": ["相关标签1", "相关标签2", "相关标签3"]
+}}
+"""
+        
+        try:
+            completion = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
+            )
+            
+            result = json.loads(completion.choices[0].message.content)
+            
+            return ContentItem(
+                title=result.get("title", f"{task_spec.topic}分享")[:20],
+                body=result.get("body", "")[:1000],
+                tags=result.get("tags", [task_spec.topic])
+            )
+            
+        except Exception as e:
+            print(f"生成内容失败: {e}")
+            return ContentItem(
+                title=f"{task_spec.topic}｜真实分享"[:20],
+                body=f"关于{task_spec.topic}，我想和大家分享一下我的经验...",
+                tags=[task_spec.topic]
+            )

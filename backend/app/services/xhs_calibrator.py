@@ -443,30 +443,77 @@ class XiaohongshuCalibrator:
             # 调用MCP发布工具
             result = await self._call_tool("publish_content", publish_args)
             
-            # 解析结果
+            print(f"[发布] MCP返回结果: {result}")  # 调试日志
+            
+            # 解析结果 - 判断是否发布成功
+            is_success = False
+            text_result = ""
+            
             if result and "content" in result:
                 content_list = result.get("content", [])
                 if content_list and len(content_list) > 0:
                     text_result = content_list[0].get("text", "")
+                    print(f"[发布] 解析文本结果: {text_result}")
+                    
+                    # 判断是否成功（检查关键词）
+                    is_success = any(keyword in text_result.lower() for keyword in [
+                        "success", "成功", "发布成功", "已发布", "published"
+                    ])
+            
+            # 如果没有content但也没有error，也认为成功
+            if not is_success and result and isinstance(result, dict):
+                has_error = any(key in str(result).lower() for key in ["error", "错误", "失败", "fail"])
+                if not has_error:
+                    is_success = True
+            
+            if not is_success:
+                return {
+                    "success": False,
+                    "error": text_result or "发布失败，未获取到有效响应",
+                    "data": result
+                }
+            
+            # 发布成功，尝试通过搜索获取 noteId
+            note_id = None
+            xsec_token = None
+            
+            print(f"[发布] 发布成功，等待2秒后搜索获取noteId...")
+            import asyncio
+            await asyncio.sleep(2)  # 等待小红书索引
+            
+            # 用标题关键词搜索
+            search_keyword = content.title[:8]  # 取前8个字符
+            try:
+                search_result = await self._call_tool("search_feeds", {"keyword": search_keyword})
+                print(f"[发布] 搜索结果: {search_result}")
+                
+                if search_result and "content" in search_result:
+                    search_text = search_result.get("content", [{}])[0].get("text", "")
                     try:
-                        # 尝试解析JSON结果
-                        data = json.loads(text_result) if text_result else {}
-                        return {
-                            "success": True,
-                            "note_id": data.get("noteId") or data.get("note_id"),
-                            "data": data
-                        }
+                        search_data = json.loads(search_text) if search_text else {}
+                        feeds = search_data.get("feeds", []) if isinstance(search_data, dict) else search_data if isinstance(search_data, list) else []
+                        
+                        # 找标题匹配的笔记
+                        for feed in feeds:
+                            note_card = feed.get("noteCard", {})
+                            feed_title = note_card.get("displayTitle", "") or note_card.get("title", "")
+                            
+                            # 检查标题是否匹配（前10个字符）
+                            if feed_title and content.title[:10] in feed_title or feed_title[:10] in content.title:
+                                note_id = feed.get("id") or note_card.get("noteId")
+                                xsec_token = feed.get("xsecToken") or feed.get("xsec_token")
+                                print(f"[发布] 找到匹配笔记: noteId={note_id}, xsec_token={xsec_token}")
+                                break
                     except json.JSONDecodeError:
-                        # 如果不是JSON，直接返回文本
-                        return {
-                            "success": "success" in text_result.lower() or "成功" in text_result,
-                            "message": text_result,
-                            "data": result
-                        }
+                        print(f"[发布] 搜索结果JSON解析失败")
+            except Exception as e:
+                print(f"[发布] 搜索noteId失败: {e}")
             
             return {
-                "success": False,
-                "error": "发布失败，未获取到有效响应",
+                "success": True,
+                "note_id": note_id,
+                "xsec_token": xsec_token,
+                "message": "发布成功",
                 "data": result
             }
             

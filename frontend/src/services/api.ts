@@ -120,3 +120,569 @@ export async function checkLoginStatus(): Promise<{
   const response = await api.get('/xhs-login-status')
   return response.data
 }
+
+// 通过标题同步笔记数据
+export async function syncNotes(titles: string[]): Promise<{
+  notes: Array<{
+    noteId: string
+    xsecToken: string
+    title: string
+    likedCount: number
+    collectedCount: number
+    commentCount: number
+    shareCount: number
+    matchedTitle: string
+  }>
+  error?: string
+}> {
+  const response = await api.post('/sync-notes', { titles })
+  return response.data
+}
+
+// 获取单个笔记的效果数据
+export async function getNoteStats(
+  noteId: string, 
+  options?: { xsecToken?: string; titleKeyword?: string }
+): Promise<{
+  result: any
+}> {
+  const params: { xsec_token?: string; title_keyword?: string } = {}
+  if (options?.xsecToken) {
+    params.xsec_token = options.xsecToken
+  }
+  if (options?.titleKeyword) {
+    params.title_keyword = options.titleKeyword
+  }
+  const response = await api.get(`/note-stats/${noteId}`, { params })
+  return response.data
+}
+
+// 自动生成内容（低AI味）
+export async function autoGenerateContent(
+  topic: string,
+  goals: string[] = ['maximize_save'],
+  audience: string = '小红书用户',
+  referenceCount: number = 10
+): Promise<{
+  content: ContentItem
+  reference_count: number
+  calibration: {
+    avg_title_length: number
+    common_patterns: string[]
+    emoji_rate: number
+    common_tags: string[]
+  }
+}> {
+  const response = await api.post('/auto-generate', null, {
+    params: { topic, goals, audience, reference_count: referenceCount }
+  })
+  return response.data
+}
+
+// AI 生成原创图片
+export async function generateImage(
+  prompt: string,
+  style: string = '小红书风格',
+  aspectRatio: string = '1:1'
+): Promise<{
+  success: boolean
+  image?: string
+  error?: string
+}> {
+  const response = await api.post('/generate-image', {
+    prompt,
+    style,
+    aspect_ratio: aspectRatio
+  })
+  return response.data
+}
+
+// 根据内容生成封面图
+export async function generateCover(
+  content: ContentItem,
+  topic: string = ''
+): Promise<{
+  success: boolean
+  image?: string
+  error?: string
+}> {
+  const response = await api.post('/generate-cover', content, {
+    params: { topic }
+  })
+  return response.data
+}
+
+// 智能扩展话题
+export async function expandTopic(briefInput: string): Promise<{
+  success: boolean
+  data: {
+    topic: string
+    detailed_topic: string
+    suggested_angles: string[]
+    target_audiences: string[]
+    content_types: string[]
+    hot_keywords: string[]
+  }
+}> {
+  const response = await api.post('/expand-topic', { brief_input: briefInput })
+  return response.data
+}
+
+
+// ============ P0 新增 API：学习引擎 ============
+
+// 获取学习引擎统计
+export async function getLearningStats(): Promise<{
+  total_records: number
+  analyzed_records: number
+  good_patterns: Record<string, number>
+  bad_patterns: Record<string, number>
+  performance_stats: {
+    avg_score: number
+    best_score: number
+    worst_score: number
+  }
+}> {
+  const response = await api.get('/learning/stats')
+  return response.data
+}
+
+// 获取学习引擎优化建议
+export async function getLearningHints(): Promise<{
+  hints: string[]
+  prompt_enhancement: string
+}> {
+  const response = await api.get('/learning/hints')
+  return response.data
+}
+
+// 记录内容到学习引擎
+export async function recordContent(
+  contentId: string,
+  title: string,
+  body: string,
+  tags: string[] = [],
+  topic: string = ''
+): Promise<{ success: boolean; message: string }> {
+  const response = await api.post('/learning/record', {
+    content_id: contentId,
+    title,
+    body,
+    tags,
+    topic
+  })
+  return response.data
+}
+
+// 更新内容效果数据
+export async function updateContentStats(
+  contentId: string,
+  stats: { likes?: number; collects?: number; comments?: number; shares?: number }
+): Promise<{ success: boolean; message: string }> {
+  const response = await api.post('/learning/update-stats', {
+    content_id: contentId,
+    stats
+  })
+  return response.data
+}
+
+
+// ============ P0 新增 API：多样性控制 ============
+
+// 获取多样性统计
+export async function getDiversityStats(): Promise<{
+  total_titles: number
+  recent_titles_count: number
+  unique_tags: number
+  top_tags: [string, number][]
+  recent_styles: string[]
+}> {
+  const response = await api.get('/diversity/stats')
+  return response.data
+}
+
+// 检查内容多样性
+export async function checkContentDiversity(
+  title: string,
+  body?: string,
+  tags?: string
+): Promise<{
+  is_valid: boolean
+  issues: string[]
+  suggestions: string[]
+}> {
+  const response = await api.get('/diversity/check', {
+    params: { title, body, tags }
+  })
+  return response.data
+}
+
+// 获取多样性提示
+export async function getDiversityPrompt(): Promise<{
+  prompt: string
+  suggested_style: string
+}> {
+  const response = await api.get('/diversity/prompt')
+  return response.data
+}
+
+
+// ============ P0 新增 API：自动监控 ============
+
+// 添加监控任务
+export async function addMonitorTask(
+  contentId: string,
+  noteId: string
+): Promise<{
+  success: boolean
+  task: { content_id: string; note_id: string; status: string }
+}> {
+  const response = await api.post('/monitor/add', {
+    content_id: contentId,
+    note_id: noteId
+  })
+  return response.data
+}
+
+// 获取监控任务列表
+export async function getMonitorTasks(): Promise<{
+  tasks: Array<{
+    content_id: string
+    note_id: string
+    status: string
+    check_count: number
+    total_checks: number
+    created_at: string
+    last_check: string | null
+    stats: Record<string, number> | null
+  }>
+  pending_count: number
+}> {
+  const response = await api.get('/monitor/tasks')
+  return response.data
+}
+
+// 手动执行一次监控检查
+export async function runMonitorOnce(): Promise<{
+  success: boolean
+  completed_count: number
+  remaining: number
+}> {
+  const response = await api.post('/monitor/run-once')
+  return response.data
+}
+
+
+// ============ P0 新增 API：AI检测规避 ============
+
+// 人性化处理内容
+export async function humanizeContent(
+  title: string,
+  body: string
+): Promise<{
+  title: string
+  body: string
+  original_score: { score: number; issues: string[]; ai_patterns_found: number }
+  new_score: { score: number; issues: string[]; ai_patterns_found: number }
+  improvement: number
+}> {
+  const response = await api.post('/humanize/content', { title, body })
+  return response.data
+}
+
+// 检查文本人性化程度
+export async function checkHumanness(text: string): Promise<{
+  score: number
+  issues: string[]
+  ai_patterns_found: number
+}> {
+  const response = await api.get('/humanize/check', { params: { text } })
+  return response.data
+}
+
+// 获取人性化写作提示
+export async function getHumanizePrompt(): Promise<{
+  prompt: string
+}> {
+  const response = await api.get('/humanize/prompt')
+  return response.data
+}
+
+
+// ============ 增强版自动生成（集成P0功能）============
+
+export async function autoGenerateEnhanced(
+  topic: string,
+  goals: string[] = ['maximize_save'],
+  audience: string = '小红书用户',
+  referenceCount: number = 10,
+  useLearning: boolean = true,
+  checkDiversity: boolean = true,
+  humanize: boolean = true
+): Promise<{
+  content: ContentItem
+  reference_count: number
+  calibration: {
+    avg_title_length: number
+    common_patterns: string[]
+    emoji_rate: number
+    common_tags: string[]
+  }
+  p0_enhancements: {
+    learning_hints_applied: number
+    diversity_check: { is_valid: boolean; issues: string[]; suggestions: string[] } | null
+    humanness_score: { score: number; issues: string[]; ai_patterns_found: number } | null
+  }
+}> {
+  const response = await api.post('/auto-generate-enhanced', null, {
+    params: {
+      topic,
+      goals,
+      audience,
+      reference_count: referenceCount,
+      use_learning: useLearning,
+      check_diversity: checkDiversity,
+      humanize
+    }
+  })
+  return response.data
+}
+
+// ==================== 素材库 API ====================
+
+export interface MaterialImage {
+  id: string
+  type: string
+  filename: string
+  path: string
+  tags: string[]
+  description: string
+  source: string
+  created_at: string
+  used_count: number
+}
+
+export interface MaterialText {
+  id: string
+  type: string
+  text_type: string
+  content: string
+  tags: string[]
+  description: string
+  source: string
+  performance: Record<string, number>
+  created_at: string
+  used_count: number
+}
+
+export async function getMaterialStats(): Promise<{
+  total_images: number
+  total_texts: number
+  total_collections: number
+  tags: string[]
+  text_types: Record<string, number>
+}> {
+  const response = await api.get('/materials/stats')
+  return response.data
+}
+
+export async function addMaterialImage(
+  imageData: string,
+  options?: {
+    filename?: string
+    tags?: string[]
+    description?: string
+    source?: string
+  }
+): Promise<{ success: boolean; material: MaterialImage }> {
+  const response = await api.post('/materials/images', {
+    image_data: imageData,
+    ...options
+  })
+  return response.data
+}
+
+export async function getMaterialImages(
+  tags?: string[],
+  limit: number = 20,
+  offset: number = 0
+): Promise<{ images: MaterialImage[]; total: number }> {
+  const response = await api.get('/materials/images', {
+    params: { tags: tags?.join(','), limit, offset }
+  })
+  return response.data
+}
+
+export async function getMaterialImageData(materialId: string): Promise<{ image_data: string }> {
+  const response = await api.get(`/materials/images/${materialId}`)
+  return response.data
+}
+
+export async function deleteMaterialImage(materialId: string): Promise<{ success: boolean }> {
+  const response = await api.delete(`/materials/images/${materialId}`)
+  return response.data
+}
+
+export async function addMaterialText(
+  content: string,
+  textType: string = 'copy',
+  options?: {
+    tags?: string[]
+    description?: string
+    source?: string
+    performance?: Record<string, number>
+  }
+): Promise<{ success: boolean; material: MaterialText }> {
+  const response = await api.post('/materials/texts', {
+    content,
+    text_type: textType,
+    ...options
+  })
+  return response.data
+}
+
+export async function getMaterialTexts(
+  textType?: string,
+  tags?: string[],
+  limit: number = 50,
+  offset: number = 0
+): Promise<{ texts: MaterialText[]; total: number }> {
+  const response = await api.get('/materials/texts', {
+    params: { text_type: textType, tags: tags?.join(','), limit, offset }
+  })
+  return response.data
+}
+
+export async function deleteMaterialText(materialId: string): Promise<{ success: boolean }> {
+  const response = await api.delete(`/materials/texts/${materialId}`)
+  return response.data
+}
+
+export async function getRelevantMaterials(
+  topic: string,
+  maxImages: number = 5,
+  maxTexts: number = 10
+): Promise<{ images: MaterialImage[]; texts: MaterialText[] }> {
+  const response = await api.get('/materials/relevant', {
+    params: { topic, max_images: maxImages, max_texts: maxTexts }
+  })
+  return response.data
+}
+
+// ==================== 历史发帖学习 API ====================
+
+export interface HistoryPost {
+  note_id: string
+  title: string
+  body: string
+  tags: string[]
+  cover_image?: string
+  posted_at: string
+  performance: Record<string, number>
+  analyzed: boolean
+}
+
+export interface UserProfile {
+  writing_style: {
+    tone: string
+    emoji_density: number
+    avg_title_length: number
+    avg_body_length: number
+    paragraph_style: string
+    punctuation_style: string
+  }
+  content_preferences: {
+    favorite_topics: string[]
+    favorite_tags: string[]
+    common_hooks: string[]
+    common_endings: string[]
+  }
+  performance_insights: {
+    best_performing_topics: string[]
+    best_performing_tags: string[]
+    optimal_title_length: number
+    optimal_body_length: number
+    best_posting_time: string | null
+  }
+  last_updated: string | null
+}
+
+export async function getHistoryStats(): Promise<{
+  total_posts: number
+  analyzed_posts: number
+  total_engagement: Record<string, number>
+  avg_engagement: Record<string, number>
+  profile_updated: string | null
+  writing_tone: string
+  top_tags: string[]
+}> {
+  const response = await api.get('/history/stats')
+  return response.data
+}
+
+export async function getUserProfile(): Promise<UserProfile> {
+  const response = await api.get('/history/profile')
+  return response.data
+}
+
+export async function getStylePrompt(): Promise<{ prompt: string }> {
+  const response = await api.get('/history/style-prompt')
+  return response.data
+}
+
+export async function addHistoryPost(post: {
+  note_id: string
+  title: string
+  body: string
+  tags: string[]
+  cover_image?: string
+  posted_at?: string
+  performance?: Record<string, number>
+}): Promise<{ success: boolean; post: HistoryPost }> {
+  const response = await api.post('/history/posts', post)
+  return response.data
+}
+
+export async function getHistoryPosts(
+  limit: number = 50,
+  offset: number = 0,
+  sortBy: string = 'posted_at'
+): Promise<{ posts: HistoryPost[]; total: number }> {
+  const response = await api.get('/history/posts', {
+    params: { limit, offset, sort_by: sortBy }
+  })
+  return response.data
+}
+
+export async function importHistoryFromXHS(
+  posts: Array<Record<string, unknown>>
+): Promise<{ success: boolean; imported_count: number }> {
+  const response = await api.post('/history/import', { posts })
+  return response.data
+}
+
+export async function updatePostPerformance(
+  noteId: string,
+  performance: Record<string, number>
+): Promise<{ success: boolean }> {
+  const response = await api.post('/history/update-performance', {
+    note_id: noteId,
+    performance
+  })
+  return response.data
+}
+
+export async function analyzeHistory(): Promise<{ success: boolean; profile: UserProfile }> {
+  const response = await api.post('/history/analyze')
+  return response.data
+}
+
+export async function getReferenceContent(
+  topic: string,
+  maxCount: number = 3
+): Promise<{ references: HistoryPost[] }> {
+  const response = await api.get('/history/reference', {
+    params: { topic, max_count: maxCount }
+  })
+  return response.data
+}

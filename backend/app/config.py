@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     default_model: str = "gpt-4o"
     
+    # Gemini API 配置（用于图片生成）
+    gemini_api_key: str = ""
+    
     # 小红书 MCP 配置
     xiaohongshu_mcp_url: str = "http://localhost:18060/mcp"
     

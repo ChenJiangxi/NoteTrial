@@ -2,11 +2,16 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { 
   Zap, Send, Loader2, Sparkles, Play, Image as ImageIcon, Wand2,
   Share2, Paperclip, X, FileText, Upload, Plus, Search,
-  Layout, Smartphone, ChevronRight, UserCircle2, BarChart3, GripVertical
+  Layout, Smartphone, ChevronRight, UserCircle2, BarChart3, GripVertical, Home
 } from 'lucide-react'
 import { useApp } from './contexts/AppContext'
 import { healthCheck, sendChatMessage, generateVariant, searchImages, runCrowdTest, publishContent } from './services/api'
 import type { ContentItem, CrowdTestResult } from './types/api'
+import WelcomePage from './components/WelcomePage'
+import AutoModePage from './components/AutoModePage'
+
+// 应用模式类型
+type AppMode = 'welcome' | 'interactive' | 'auto'
 
 // 分隔条组件
 function Resizer({ onDrag, side }: { onDrag: (delta: number) => void; side: 'left' | 'right' }) {
@@ -65,6 +70,9 @@ function App() {
     taskSpec, contentA, contentB, messages,
     setTaskSpec, setContentA, setContentB, addMessage, setMessages,
   } = useApp()
+  
+  // 应用模式状态
+  const [appMode, setAppMode] = useState<AppMode>('welcome')
   
   const [isConnected, setIsConnected] = useState(false)
   const [input, setInput] = useState('')
@@ -258,17 +266,45 @@ function App() {
     setTestResult(null)
   }
 
+  // 处理模式选择
+  const handleModeSelect = (mode: 'interactive' | 'auto') => {
+    setAppMode(mode)
+  }
+
+  // 返回欢迎页
+  const handleBackToWelcome = () => {
+    setAppMode('welcome')
+    handleReset()
+  }
+
+  // 根据模式渲染不同页面
+  if (appMode === 'welcome') {
+    return <WelcomePage onSelectMode={handleModeSelect} />
+  }
+
+  if (appMode === 'auto') {
+    return <AutoModePage onBack={handleBackToWelcome} />
+  }
+
+  // 人机交互模式 - 原有界面
   return (
     <div className="h-screen flex flex-col bg-slate-50 font-sans text-slate-900">
       {/* 顶栏 - 专业风格 */}
       <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between flex-shrink-0 shadow-sm z-10 w-full">
         <div className="flex items-center gap-3">
+          <button 
+            onClick={handleBackToWelcome}
+            className="w-8 h-8 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center justify-center transition-colors"
+            title="返回首页"
+          >
+            <Home className="w-4 h-4 text-slate-600" />
+          </button>
           <div className="w-8 h-8 bg-[#ff2442] rounded-lg flex items-center justify-center shadow-md">
             <Zap className="w-5 h-5 text-white fill-current" />
           </div>
           <div>
             <h1 className="font-bold text-slate-800 text-lg leading-tight tracking-tight">NoteTrial</h1>
-            <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">A/B Testing Platform</p>
+            <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">人机交互模式</p>
           </div>
         </div>
         
