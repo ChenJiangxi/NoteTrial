@@ -35,7 +35,12 @@ export default function ContentEditor({
         base_content: contentA,
         variant_type: type,
       })
-      onContentBChange(variant)
+      // Convert variant response to ContentItem
+      onContentBChange({
+        title: variant.variant_id, // Use variant_id as title for now
+        body: variant.content,
+        tags: [...contentA.tags],
+      })
       setActiveTab('B')
     } catch (error) {
       console.error('生成变体失败:', error)

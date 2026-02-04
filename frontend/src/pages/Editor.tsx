@@ -175,13 +175,13 @@ export default function Editor() {
   useEffect(() => {
     if (content) {
       setFormData({
-        title: content.title || '',
-        body: content.body || '',
-        tags: content.tags || [],
-        cover_image: content.cover_image || '',
-        targetAudience: content.targetAudience || '',
-        focusPoint: content.focusPoint || '',
-        tone: content.tone || 'professional',
+        title: (content as any).title || content.title || '',
+        body: (content as any).body || content.body || '',
+        tags: (content as any).tags || content.tags || [],
+        cover_image: (content as any).cover_image || content.cover_image || '',
+        targetAudience: (content as any).targetAudience || '',
+        focusPoint: (content as any).focusPoint || '',
+        tone: (content as any).tone || content.tone || 'professional',
       });
     }
   }, [content]);
@@ -274,17 +274,17 @@ export default function Editor() {
   const saveMutation = useMutation({
     mutationFn: async (data: typeof formData) => {
       if (isEditing) {
-        const { data: res } = await contentAPI.update(id, data);
+        const res = await contentAPI.update(id, data);
         return res;
       } else {
-        const { data: res } = await contentAPI.create(data);
+        const res = await contentAPI.create(data);
         return res;
       }
     },
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['contents'] });
-      if (!isEditing && res.id) {
-        navigate(`/editor/${res.id}`);
+      if (!isEditing && (res as any).id) {
+        navigate(`/editor/${(res as any).id}`);
       }
     },
   });

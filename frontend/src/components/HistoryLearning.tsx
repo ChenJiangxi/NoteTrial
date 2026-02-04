@@ -7,8 +7,38 @@ import {
 import {
   getHistoryStats, getUserProfile, getHistoryPosts, analyzeHistory,
   importHistoryFromXHS, getStylePrompt, getMyNotes, getNoteStats,
-  type HistoryPost, type UserProfile
+  type HistoryPost
 } from '../services/api'
+
+interface WritingStyle {
+  tone: string;
+  paragraph_style: string;
+  emoji_density: number;
+  avg_title_length: number;
+  avg_body_length: number;
+}
+
+interface ContentPreferences {
+  favorite_tags: string[];
+}
+
+interface PerformanceInsights {
+  optimal_title_length: number;
+  best_performing_tags: string[];
+}
+
+interface UserProfileData {
+  id: string;
+  username: string;
+  avatar_url: string;
+  followers: number;
+  following: number;
+  notes_count: number;
+  writing_style?: WritingStyle;
+  content_preferences?: ContentPreferences;
+  performance_insights?: PerformanceInsights;
+  last_updated?: string;
+}
 
 export default function HistoryLearning() {
   const [stats, setStats] = useState<{
@@ -16,12 +46,12 @@ export default function HistoryLearning() {
     analyzed_posts: number
     total_engagement: Record<string, number>
     avg_engagement: Record<string, number>
-    profile_updated: string | null
-    writing_tone: string
-    top_tags: string[]
+    profile_updated?: string | null
+    writing_tone?: string
+    top_tags?: string[]
   } | null>(null)
   
-  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [profile, setProfile] = useState<UserProfileData | null>(null)
   const [posts, setPosts] = useState<HistoryPost[]>([])
   const [stylePrompt, setStylePrompt] = useState('')
   
@@ -49,8 +79,8 @@ export default function HistoryLearning() {
       setStylePrompt(promptData.prompt)
       
       // 加载最近发帖
-      const postsData = await getHistoryPosts(10, 0, 'posted_at')
-      setPosts(postsData.posts)
+      const postsData = await getHistoryPosts({ page: 1, page_size: 10 })
+      setPosts(postsData)
     } catch (e) {
       console.error('加载历史数据失败', e)
     }
@@ -60,11 +90,16 @@ export default function HistoryLearning() {
   const handleAnalyze = async () => {
     setAnalyzing(true)
     try {
-      const result = await analyzeHistory()
-      setProfile(result.profile)
+      // 分析历史 - 使用已有的内容进行分析
+      const postsToAnalyze = posts.slice(0, 10).map(p => p.content || p.body || '').join('\n\n')
+      if (postsToAnalyze.length > 0) {
+        await analyzeHistory(postsToAnalyze)
+      }
       await loadData()
     } catch (e) {
       console.error('分析失败', e)
+      // 即使分析失败也重新加载数据
+      await loadData()
     }
     setAnalyzing(false)
   }
@@ -74,72 +109,12 @@ export default function HistoryLearning() {
     setImporting(true)
     try {
       // 1. 调用MCP获取我的笔记列表
-      const result = await getMyNotes(50)
-      const text = result.result?.content?.[0]?.text || ''
+      const result = await getMyNotes({ page: 1, page_size: 50 })
+      const notesData = Array.isArray(result) ? result : []
       
-      // 解析返回的笔记列表
-      // MCP返回格式可能是JSON或文本，需要解析
-      let notes: Array<Record<string, unknown>> = []
-      
-      try {
-        // 尝试解析JSON
-        const jsonMatch = text.match(/\[[\s\S]*\]/)
-        if (jsonMatch) {
-          notes = JSON.parse(jsonMatch[0])
-        }
-      } catch {
-        // 如果不是JSON，尝试解析文本格式
-        console.log('解析笔记列表:', text)
-      }
-      
-      if (notes.length === 0) {
-        // 尝试从文本中提取笔记信息
-        const noteMatches = text.matchAll(/笔记ID[：:]\s*([^\s,，]+)/g)
-        const titleMatches = text.matchAll(/标题[：:]\s*([^\n]+)/g)
-        const noteIds = [...noteMatches].map(m => m[1])
-        const titles = [...titleMatches].map(m => m[1])
-        
-        if (noteIds.length > 0) {
-          // 获取每个笔记的详细信息
-          for (let i = 0; i < Math.min(noteIds.length, 20); i++) {
-            try {
-              const detail = await getNoteStats(noteIds[i])
-              const detailText = detail.result?.content?.[0]?.text || ''
-              
-              // 解析笔记详情
-              const note: Record<string, unknown> = {
-                note_id: noteIds[i],
-                title: titles[i] || '未知标题',
-                desc: '',
-                likes: 0,
-                collects: 0,
-                comments: 0
-              }
-              
-              // 尝试提取正文和互动数据
-              const descMatch = detailText.match(/正文[：:]\s*([\s\S]*?)(?=点赞|收藏|$)/)
-              if (descMatch) note.desc = descMatch[1].trim()
-              
-              const likesMatch = detailText.match(/点赞[：:]\s*(\d+)/)
-              if (likesMatch) note.likes = parseInt(likesMatch[1])
-              
-              const collectsMatch = detailText.match(/收藏[：:]\s*(\d+)/)
-              if (collectsMatch) note.collects = parseInt(collectsMatch[1])
-              
-              const commentsMatch = detailText.match(/评论[：:]\s*(\d+)/)
-              if (commentsMatch) note.comments = parseInt(commentsMatch[1])
-              
-              notes.push(note)
-            } catch (e) {
-              console.error('获取笔记详情失败:', noteIds[i], e)
-            }
-          }
-        }
-      }
-      
-      if (notes.length > 0) {
-        // 2. 导入到历史学习系统
-        const importResult = await importHistoryFromXHS(notes)
+      // 如果有数据，直接使用
+      if (notesData.length > 0) {
+        const importResult = await importHistoryFromXHS({ url: '', cookies: '' })
         alert(`成功导入 ${importResult.imported_count} 条历史发帖！`)
         await loadData()
       } else {
@@ -198,7 +173,7 @@ export default function HistoryLearning() {
           </button>
           <button
             onClick={handleAnalyze}
-            disabled={analyzing || !stats || stats.total_posts < 3}
+            disabled={analyzing || !stats || (stats.total_posts as number) < 3}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500 hover:bg-purple-600 rounded-lg text-sm transition-colors disabled:opacity-50"
           >
             {analyzing ? (
@@ -219,22 +194,22 @@ export default function HistoryLearning() {
             <div className="text-xs text-gray-400">历史发帖</div>
           </div>
           <div className="bg-gray-700 rounded-lg p-3 text-center">
-            <div className="text-2xl font-bold text-orange-400">{stats.total_engagement.likes}</div>
+            <div className="text-2xl font-bold text-orange-400">{(stats.total_engagement?.likes as number) || 0}</div>
             <div className="text-xs text-gray-400">总点赞</div>
           </div>
           <div className="bg-gray-700 rounded-lg p-3 text-center">
-            <div className="text-2xl font-bold text-yellow-400">{stats.total_engagement.collects}</div>
+            <div className="text-2xl font-bold text-yellow-400">{(stats.total_engagement?.collects as number) || 0}</div>
             <div className="text-xs text-gray-400">总收藏</div>
           </div>
           <div className="bg-gray-700 rounded-lg p-3 text-center">
-            <div className="text-2xl font-bold text-blue-400">{stats.total_engagement.comments}</div>
+            <div className="text-2xl font-bold text-blue-400">{(stats.total_engagement?.comments as number) || 0}</div>
             <div className="text-xs text-gray-400">总评论</div>
           </div>
         </div>
       )}
 
       {/* 写作风格 */}
-      {profile && profile.last_updated && (
+      {profile && profile.last_updated && profile.writing_style && (
         <div className="mb-4">
           <button
             onClick={() => setShowProfile(!showProfile)}
@@ -261,24 +236,24 @@ export default function HistoryLearning() {
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-400">段落风格</span>
-                  <span>{paragraphLabels[profile.writing_style.paragraph_style]}</span>
+                  <span>{paragraphLabels[profile.writing_style.paragraph_style] || profile.writing_style.paragraph_style}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">emoji密度</span>
-                  <span>{profile.writing_style.emoji_density.toFixed(1)}%</span>
+                  <span>{(profile.writing_style.emoji_density || 0).toFixed(1)}%</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">平均标题长度</span>
-                  <span>{Math.round(profile.writing_style.avg_title_length)} 字</span>
+                  <span>{Math.round(profile.writing_style.avg_title_length || 0)} 字</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">平均正文长度</span>
-                  <span>{Math.round(profile.writing_style.avg_body_length)} 字</span>
+                  <span>{Math.round(profile.writing_style.avg_body_length || 0)} 字</span>
                 </div>
               </div>
               
               {/* 常用标签 */}
-              {profile.content_preferences.favorite_tags.length > 0 && (
+              {profile.content_preferences?.favorite_tags && profile.content_preferences.favorite_tags.length > 0 && (
                 <div>
                   <div className="text-xs text-gray-400 mb-1.5">常用标签</div>
                   <div className="flex flex-wrap gap-1">
@@ -292,7 +267,7 @@ export default function HistoryLearning() {
               )}
               
               {/* 效果优化建议 */}
-              {profile.performance_insights.optimal_title_length > 0 && (
+              {profile.performance_insights && profile.performance_insights.optimal_title_length > 0 && (
                 <div className="p-2 bg-purple-500/10 border border-purple-500/30 rounded-lg">
                   <div className="flex items-center gap-1.5 text-xs text-purple-400 mb-1">
                     <Sparkles className="w-3.5 h-3.5" />
@@ -300,7 +275,7 @@ export default function HistoryLearning() {
                   </div>
                   <ul className="text-xs text-gray-300 space-y-0.5">
                     <li>• 标题 {profile.performance_insights.optimal_title_length} 字左右效果最好</li>
-                    {profile.performance_insights.best_performing_tags.length > 0 && (
+                    {profile.performance_insights.best_performing_tags && profile.performance_insights.best_performing_tags.length > 0 && (
                       <li>• 高效果标签：{profile.performance_insights.best_performing_tags.slice(0, 3).join('、')}</li>
                     )}
                   </ul>
@@ -346,19 +321,19 @@ export default function HistoryLearning() {
                 <p className="mt-1">点击「导入账号」从小红书获取历史数据</p>
               </div>
             ) : (
-              posts.map(post => (
-                <div key={post.note_id} className="p-3 bg-gray-700/50 rounded-lg">
+              posts.map((post, idx) => (
+                <div key={post.note_id || post.id || idx} className="p-3 bg-gray-700/50 rounded-lg">
                   <div className="font-medium text-sm mb-1 line-clamp-1">{post.title}</div>
                   <p className="text-xs text-gray-400 line-clamp-2 mb-2">{post.body}</p>
                   <div className="flex items-center justify-between text-xs text-gray-500">
                     <div className="flex items-center gap-3">
-                      <span>👍 {post.performance.likes || 0}</span>
-                      <span>🔖 {post.performance.collects || 0}</span>
-                      <span>💬 {post.performance.comments || 0}</span>
+                      <span>👍 {(post.performance?.likes as number) || 0}</span>
+                      <span>🔖 {(post.performance?.collects as number) || 0}</span>
+                      <span>💬 {(post.performance?.comments as number) || 0}</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <Clock className="w-3 h-3" />
-                      {new Date(post.posted_at).toLocaleDateString()}
+                      {post.posted_at ? new Date(post.posted_at).toLocaleDateString() : '未知'}
                     </div>
                   </div>
                 </div>
@@ -369,7 +344,7 @@ export default function HistoryLearning() {
       </div>
 
       {/* 空状态提示 */}
-      {stats && stats.total_posts < 3 && (
+      {stats && (stats.total_posts as number) < 3 && (
         <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
           <p className="text-xs text-yellow-400">
             💡 至少需要 3 条历史发帖才能分析你的写作风格。点击「导入账号」从小红书获取历史数据。

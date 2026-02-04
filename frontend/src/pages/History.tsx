@@ -37,8 +37,8 @@ export default function History() {
   const { data: contentsData, isLoading: contentsLoading } = useQuery({
     queryKey: ['contents'],
     queryFn: async () => {
-      const { data } = await contentAPI.getAll({ limit: 100 });
-      return data;
+      const result = await contentAPI.getAll({ page: 1, page_size: 100 });
+      return result;
     },
   });
 
@@ -46,8 +46,8 @@ export default function History() {
   const { data: experimentsData, isLoading: experimentsLoading } = useQuery({
     queryKey: ['experiments'],
     queryFn: async () => {
-      const { data } = await experimentAPI.getAll();
-      return data;
+      const result = await experimentAPI.getAll();
+      return result;
     },
   });
 
@@ -67,8 +67,8 @@ export default function History() {
     },
   });
 
-  const contents = contentsData?.contents || [];
-  const experiments = experimentsData || [];
+  const contents = Array.isArray(contentsData) ? contentsData : [];
+  const experiments = Array.isArray(experimentsData) ? experimentsData : [];
 
   const getStatusBadge = (status: string) => {
     const colors: Record<string, string> = {
@@ -100,8 +100,8 @@ export default function History() {
     return matchesSearch && matchesStatus;
   });
 
-  const filteredExperiments = experiments.filter((exp: ExperimentItem) =>
-    exp.name.toLowerCase().includes(search.toLowerCase())
+  const filteredExperiments = experiments.filter((exp: any) =>
+    exp.name?.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -227,7 +227,7 @@ export default function History() {
             </div>
           ) : (
             <div className="divide-y divide-slate-100">
-              {filteredExperiments.map((exp: ExperimentItem) => (
+              {filteredExperiments.map((exp: any) => (
                 <div
                   key={exp.id}
                   className="flex items-center gap-4 p-4 hover:bg-slate-50 transition-colors"

@@ -16,7 +16,7 @@ import {
   CheckCircle2,
 } from 'lucide-react'
 import type { ContentItem, TaskSpec, CrowdTestResult, StatisticalConfidence } from '../types/api'
-import { runCrowdTest, publishContent } from '../services/api'
+import { runCrowdTestFull, publishContent } from '../services/api'
 
 interface CrowdTestPanelProps {
   taskSpec: TaskSpec | null
@@ -42,7 +42,7 @@ export default function CrowdTestPanel({ taskSpec, contentA, contentB }: CrowdTe
     setPublishSuccess(false)
 
     try {
-      const testResult = await runCrowdTest({
+      const testResult = await runCrowdTestFull({
         task_spec: taskSpec,
         content_a: contentA,
         content_b: contentB,

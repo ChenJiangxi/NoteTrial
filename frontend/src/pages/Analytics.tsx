@@ -26,11 +26,12 @@ interface TrendData {
 interface TopContent {
   id: string;
   title: string;
-  views: number;
+  views?: number;
   likes: number;
   comments: number;
-  shares: number;
-  engagement_rate: number;
+  shares?: number;
+  saves?: number;
+  engagement_rate?: number;
 }
 
 interface FunnelData {
@@ -82,21 +83,26 @@ export default function Analytics() {
   const { data: overview, isLoading: overviewLoading } = useQuery({
     queryKey: ['analytics-overview', timeRange],
     queryFn: async () => {
-      const { data } = await analyticsAPI.getOverview(dateRange);
-      return data;
+      const result = await analyticsAPI.getOverview();
+      return result;
     },
     retry: 2,
   });
 
   // 获取趋势数据
-  const { data: trendData, isLoading: trendLoading } = useQuery({
+  const { data: trendDataRaw, isLoading: trendLoading } = useQuery({
     queryKey: ['analytics-trend', timeRange],
     queryFn: async () => {
       const days = timeRange === 'day' ? 1 : timeRange === 'week' ? 7 : 30;
-      const { data } = await analyticsAPI.getTrend({ days });
-      return data;
+      const result = await analyticsAPI.getTrend({ days });
+      return result;
     },
   });
+
+  // 从返回数据中提取数组
+  const trendData: TrendData[] = Array.isArray(trendDataRaw) 
+    ? trendDataRaw 
+    : (trendDataRaw as unknown as { data?: TrendData[] })?.data || [];
 
   // 模拟转化漏斗数据
   const funnelData: FunnelData[] = [

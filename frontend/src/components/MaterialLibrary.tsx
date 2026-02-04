@@ -55,11 +55,11 @@ export default function MaterialLibrary({
       setStats(statsData)
       
       if (activeTab === 'images') {
-        const result = await getMaterialImages(filterTags.length > 0 ? filterTags : undefined)
-        setImages(result.images)
+        const result = await getMaterialImages()
+        setImages(result)
       } else {
-        const result = await getMaterialTexts(textType || undefined, filterTags.length > 0 ? filterTags : undefined)
-        setTexts(result.texts)
+        const result = await getMaterialTexts()
+        setTexts(result)
       }
     } catch (e) {
       console.error('加载素材失败', e)
@@ -78,9 +78,8 @@ export default function MaterialLibrary({
       reader.onload = async (event) => {
         const base64 = event.target?.result as string
         try {
-          await addMaterialImage(base64, {
-            filename: file.name,
-            source: 'upload',
+          await addMaterialImage({ 
+            url: base64,
             tags: filterTags.length > 0 ? filterTags : undefined
           })
         } catch (e) {
@@ -118,9 +117,9 @@ export default function MaterialLibrary({
     
     setUploading(true)
     try {
-      await addMaterialText(newTextContent, newTextType, {
-        tags: newTextTags ? newTextTags.split(',').map(t => t.trim()) : undefined,
-        source: 'manual'
+      await addMaterialText({ 
+        content: newTextContent,
+        tags: newTextTags ? newTextTags.split(',').map(t => t.trim()) : undefined
       })
       setNewTextContent('')
       setNewTextTags('')

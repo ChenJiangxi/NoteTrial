@@ -39,10 +39,10 @@ export default function Dashboard() {
     error: contentsError,
     refetch: refetchContents
   } = useQuery({
-    queryKey: ['contents', { limit: 10 }],
+    queryKey: ['contents', { page: 1, page_size: 10 }],
     queryFn: async () => {
-      const { data } = await contentAPI.getAll({ limit: 10 });
-      return data;
+      const result = await contentAPI.getAll({ page: 1, page_size: 10 });
+      return result;
     },
     retry: 2,
     staleTime: 5 * 60 * 1000,
@@ -56,8 +56,8 @@ export default function Dashboard() {
   } = useQuery({
     queryKey: ['analytics-overview'],
     queryFn: async () => {
-      const { data } = await analyticsAPI.getOverview();
-      return data;
+      const result = await analyticsAPI.getOverview();
+      return result;
     },
     retry: 2,
     staleTime: 5 * 60 * 1000,
@@ -68,20 +68,20 @@ export default function Dashboard() {
     queryKey: ['analytics-trend', timeRange],
     queryFn: async () => {
       const days = timeRange === '7d' ? 7 : 30;
-      const { data } = await analyticsAPI.getTrend({ days });
-      return data;
+      const result = await analyticsAPI.getTrend({ days });
+      return result;
     },
   });
 
-  const contents = contentsData?.contents || [];
-  const stats = analyticsData?.stats || {
+  const contents = Array.isArray(contentsData) ? contentsData : [];
+  const stats = (analyticsData as any)?.stats || {
     total_views: 0,
     total_likes: 0,
     total_experiments: 0,
     views_change: 0,
     likes_change: 0,
   };
-  const trend: TrendData[] = trendData || [];
+  const trend: TrendData[] = Array.isArray(trendData) ? trendData : [];
 
   const isLoading = contentsLoading || analyticsLoading;
   const error = contentsError || analyticsError;

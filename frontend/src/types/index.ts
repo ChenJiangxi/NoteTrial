@@ -50,9 +50,13 @@ export interface Content {
   title: string;
   body: string;
   tags: string[];
+  cover_image?: string;
   status: 'draft' | 'published' | 'archived';
   topic?: string;
   goal?: string;
+  targetAudience?: string;
+  focusPoint?: string;
+  tone?: string;
   created_at: string;
   updated_at: string;
 }
@@ -154,6 +158,24 @@ export interface AnalyticsSummary {
     saves: number;
     comments: number;
   };
+  // 兼容旧字段
+  stats?: {
+    total_views: number;
+    total_likes: number;
+    total_comments: number;
+    total_shares: number;
+    views_change: number;
+    likes_change: number;
+    comments_change: number;
+    shares_change: number;
+  };
+  top_contents?: Array<{
+    id: string;
+    title: string;
+    likes: number;
+    saves: number;
+    comments: number;
+  }>;
 }
 
 export interface TrendData {

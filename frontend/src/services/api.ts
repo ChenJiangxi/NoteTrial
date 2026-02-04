@@ -1,6 +1,6 @@
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 import type { ApiResponse } from '@/types';
-import type { ContentItem } from '../types/api';
+import type { ContentItem, TaskSpec, CrowdTestResult } from '../types/api';
 
 // 创建 axios 实例
 const api: AxiosInstance = axios.create({
@@ -98,11 +98,6 @@ export const postAPI = postsApi;
 export const materialAPI = materialsApi;
 export const analyticsAPI = analyticsApi;
 
-// API 响应包装器 - 将 API 返回包装成组件期望的格式
-const wrapResponse = <T>(data: T): { result: { content: T } } => ({
-  result: { content: data as unknown as string }
-});
-
 // Health check
 export const healthCheck = () => 
   request.get<{ status: string; services?: Record<string, boolean> }>('/health');
@@ -175,28 +170,37 @@ export const getLoginQRCode = () =>
 export const checkLoginStatus = () => 
   request.get<{ logged_in: boolean; user_id?: string; result?: { content?: Array<{ text?: string }> } }>('/auth/login-status');
 
-// Generate variant
-export const generateVariant = (contentId: string, variantType: string) => 
-  request.post<{ variant_id: string; content: string }>(`/contents/${contentId}/variants`, { type: variantType });
+// Generate variant - 修复签名以匹配组件调用
+export const generateVariant = (data: { task_spec: TaskSpec; base_content: ContentItem; variant_type: string }) => 
+  request.post<{ variant_id: string; content: string }>('/contents/variants', data);
 
-// Search images
-export const searchImages = (query: string) => 
-  request.get<{ images: Array<{ url: string; title: string }> }>('/images/search', { params: { q: query } } as AxiosRequestConfig);
+// Search images - 修复返回类型，提取url数组
+export const searchImages = async (query: string, limit?: number): Promise<string[]> => {
+  const result = await request.get<Array<{ url: string; title: string }>>('/images/search', { params: { q: query, limit } } as AxiosRequestConfig);
+  return result.map(item => item.url);
+};
 
-// Run crowd test
+// Run crowd test - 简单版本，返回 test_id
 export const runCrowdTest = (contentId: string) => 
   request.post<{ test_id: string; status: string }>(`/contents/${contentId}/crowd-test`);
 
-// Get history stats
+// Run crowd test - 完整版本用于组件
+export const runCrowdTestFull = (data: { task_spec: TaskSpec; content_a: ContentItem; content_b: ContentItem; max_users: number }) => 
+  request.post<CrowdTestResult>('/contents/crowd-test', data);
+
+// Get history stats - 添加可选字段
 export const getHistoryStats = () => 
   request.get<{
     total_posts: number;
     analyzed_posts: number;
     total_engagement: Record<string, number>;
     avg_engagement: Record<string, number>;
+    profile_updated?: string | null;
+    writing_tone?: string;
+    top_tags?: string[];
   }>('/history/stats');
 
-// Get user profile
+// Get user profile - 返回正确的类型
 export const getUserProfile = () => 
   request.get<{
     id: string;
@@ -205,13 +209,24 @@ export const getUserProfile = () =>
     followers: number;
     following: number;
     notes_count: number;
-    writing_style?: string;
-    content_preferences?: string[];
-    performance_insights?: Record<string, unknown>;
+    writing_style?: {
+      tone: string;
+      paragraph_style: string;
+      emoji_density: number;
+      avg_title_length: number;
+      avg_body_length: number;
+    };
+    content_preferences?: {
+      favorite_tags: string[];
+    };
+    performance_insights?: {
+      optimal_title_length: number;
+      best_performing_tags: string[];
+    };
     last_updated?: string;
   }>('/users/profile');
 
-// Get history posts
+// Get history posts - 返回正确的类型
 export const getHistoryPosts = (params?: { page?: number; page_size?: number }) => 
   request.get<Array<{
     id: string;
@@ -221,7 +236,7 @@ export const getHistoryPosts = (params?: { page?: number; page_size?: number }) 
     performance: Record<string, number>;
   }>>('/history/posts', { params } as AxiosRequestConfig);
 
-// Analyze history
+// Analyze history - 需要传入内容
 export const analyzeHistory = (content: string) => 
   request.post<{ analysis: string; suggestions: string[] }>('/history/analyze', { content });
 
@@ -281,13 +296,18 @@ export const getMaterialTexts = (params?: { page?: number; page_size?: number })
 export const deleteMaterialText = (id: string) => 
   request.delete<{ success: boolean }>(`/materials/texts/${id}`);
 
-// Send chat message
-export const sendChatMessage = (message: string, context?: Record<string, unknown>) => 
+// Send chat message - 修复签名以匹配组件调用
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export const sendChatMessage = (data: { messages: ChatMessage[]; current_content?: ContentItem }) => 
   request.post<{
     message: string;
-    task_spec?: Record<string, unknown>;
-    generated_content?: string;
-  }>('/chat/message', { message, context });
+    task_spec?: TaskSpec;
+    generated_content?: ContentItem;
+  }>('/chat/message', data);
 
 // Types for materials
 export interface MaterialImage {
@@ -331,10 +351,61 @@ export interface UserProfile {
   followers: number;
   following: number;
   notes_count: number;
-  writing_style?: string;
-  content_preferences?: string[];
-  performance_insights?: Record<string, unknown>;
+  writing_style?: {
+    tone: string;
+    paragraph_style: string;
+    emoji_density: number;
+    avg_title_length: number;
+    avg_body_length: number;
+  };
+  content_preferences?: {
+    favorite_tags: string[];
+  };
+  performance_insights?: {
+    optimal_title_length: number;
+    best_performing_tags: string[];
+  };
   last_updated?: string;
+}
+
+// Analytics types
+export interface AnalyticsSummary {
+  stats: {
+    total_views: number;
+    total_likes: number;
+    total_comments: number;
+    total_shares: number;
+    views_change: number;
+    likes_change: number;
+    comments_change: number;
+    shares_change: number;
+  };
+  top_contents: Array<{
+    id: string;
+    title: string;
+    views: number;
+    likes: number;
+    comments: number;
+    shares: number;
+    engagement_rate: number;
+  }>;
+}
+
+export interface TrendData {
+  date: string;
+  views: number;
+  likes: number;
+  comments: number;
+  shares: number;
+}
+
+export interface Content {
+  id: string;
+  title: string;
+  status: 'draft' | 'published' | 'testing';
+  created_at: string;
+  updated_at: string;
+  cover_image?: string;
 }
 
 export default api;
