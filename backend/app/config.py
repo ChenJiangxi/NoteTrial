@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     default_max_users: int = 20
     batch_size: int = 5
     
+    # JWT 认证配置
+    secret_key: str = "your-super-secret-key-change-in-production"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_hours: int = 24
+    refresh_token_expire_days: int = 7
+    
     # Pydantic v2 配置方式
     model_config = SettingsConfigDict(
         env_file=str(ROOT_DIR / ".env"),

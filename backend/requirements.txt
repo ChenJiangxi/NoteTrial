@@ -1,27 +1,41 @@
-# NoteTrial Backend Dependencies
+# Python dependencies
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
 pydantic==2.5.3
 pydantic-settings==2.1.0
+
+# Database
+sqlalchemy[asyncio]==2.0.25
+asyncpg==0.29.0
+alembic==1.13.1
+
+# Auth
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
-
-# OpenAI / LLM
-openai==1.12.0
-
-# Statistical Analysis
-scipy==1.12.0
-numpy==1.26.3
-statsmodels==0.14.1
 
 # HTTP Client
 httpx==0.26.0
-aiohttp==3.9.3
 
-# Environment
+# Task Queue
+celery==5.3.6
+redis==5.0.1
+
+# Configuration
 python-dotenv==1.0.0
-
-# Image Processing
-Pillow==10.2.0
-
-# Utils
 pyyaml==6.0.1
+
+# AI Services
+openai==1.12.0
+
+# MCP Client (for connecting to xiaohongshu-mcp)
+mcp==0.9.0
+
+# Utilities
+python-dateutil==2.8.2
+levenshtein==0.21.1
+
+# Development
+pytest==7.4.4
+pytest-asyncio==0.23.3
+httpx==0.26.0

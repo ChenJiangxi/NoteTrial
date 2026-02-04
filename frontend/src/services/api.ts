@@ -1,709 +1,321 @@
-import axios from 'axios'
-import type {
-  ChatRequest,
-  ChatResponse,
-  ABTestRequest,
-  CrowdTestResult,
-  GenerateVariantRequest,
-  ContentItem,
-} from '../types/api'
+import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
+import type { ApiResponse } from '@/types';
 
-const api = axios.create({
-  baseURL: '/api',
+// 创建 axios 实例
+const api: AxiosInstance = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || '/api',
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
-})
+});
 
-// 对话接口
-export async function sendChatMessage(request: ChatRequest): Promise<ChatResponse> {
-  const response = await api.post<ChatResponse>('/chat', request)
-  return response.data
-}
-
-// 生成变体
-export async function generateVariant(request: GenerateVariantRequest): Promise<ContentItem> {
-  const response = await api.post<ContentItem>('/generate-variant', request)
-  return response.data
-}
-
-// 执行 CrowdTest
-export async function runCrowdTest(request: ABTestRequest): Promise<CrowdTestResult> {
-  const response = await api.post<CrowdTestResult>('/crowdtest', request)
-  return response.data
-}
-
-// 启动带进度的 CrowdTest 任务
-export async function startCrowdTest(request: ABTestRequest): Promise<{
-  job_id: string
-  status: 'running'
-}> {
-  const response = await api.post('/crowdtest/start', request)
-  return response.data
-}
-
-// 查询 CrowdTest 任务进度
-export async function getCrowdTestProgress(jobId: string): Promise<{
-  job_id: string
-  status: 'running' | 'completed' | 'failed'
-  progress: number
-  result?: CrowdTestResult
-  error?: string
-}> {
-  const response = await api.get(`/crowdtest/progress/${jobId}`)
-  return response.data
-}
-
-// 改进内容
-export async function improveContent(
-  content: ContentItem,
-  suggestions: string[]
-): Promise<ContentItem> {
-  const response = await api.post<ContentItem>('/improve-content', {
-    content,
-    suggestions,
-  })
-  return response.data
-}
-
-// 检查 MCP 状态
-export async function checkMCPStatus(): Promise<{ available: boolean; url: string }> {
-  const response = await api.get('/mcp-status')
-  return response.data
-}
-
-// 获取 MCP 工具列表
-export async function getMCPTools(): Promise<{ tools: Array<{ name: string; description: string }> }> {
-  const response = await api.get('/mcp-tools')
-  return response.data
-}
-
-// 搜索相关图片（智能配图）
-export async function searchImages(topic: string, limit: number = 5): Promise<string[]> {
-  const response = await api.get<{ images: string[]; topic: string }>('/search-images', {
-    params: { topic, limit }
-  })
-  return response.data.images
-}
-
-// 搜索小红书内容
-export async function searchFeeds(keyword: string, limit: number = 20): Promise<{
-  feeds: Array<{
-    id: string
-    title: string
-    desc?: string
-    likes?: number
-    collects?: number
-  }>
-  count: number
-}> {
-  const response = await api.get('/search-feeds', {
-    params: { keyword, limit }
-  })
-  return response.data
-}
-
-// 健康检查
-export async function healthCheck(): Promise<{
-  status: string
-  services: {
-    simulator: boolean
-    calibrator: boolean
-    generator: boolean
-    xiaohongshu_mcp: boolean
-  }
-}> {
-  const response = await api.get('/health')
-  return response.data
-}
-
-// 发布内容到小红书
-export async function publishContent(content: ContentItem): Promise<{
-  success: boolean
-  message?: string
-  note_id?: string
-  data?: any
-}> {
-  const response = await api.post('/publish-content', content)
-  return response.data
-}
-
-// 获取登录二维码
-export async function getLoginQRCode(): Promise<any> {
-  const response = await api.get('/login-qrcode')
-  return response.data
-}
-
-// 检查登录状态
-export async function checkLoginStatus(): Promise<{
-  result: any
-}> {
-  const response = await api.get('/xhs-login-status')
-  return response.data
-}
-
-// 通过标题同步笔记数据
-export async function syncNotes(titles: string[]): Promise<{
-  notes: Array<{
-    noteId: string
-    xsecToken: string
-    title: string
-    likedCount: number
-    collectedCount: number
-    commentCount: number
-    shareCount: number
-    matchedTitle: string
-  }>
-  error?: string
-}> {
-  const response = await api.post('/sync-notes', { titles })
-  return response.data
-}
-
-// 获取单个笔记的效果数据
-export async function getNoteStats(
-  noteId: string, 
-  options?: { xsecToken?: string; titleKeyword?: string }
-): Promise<{
-  result: any
-}> {
-  const params: { xsec_token?: string; title_keyword?: string } = {}
-  if (options?.xsecToken) {
-    params.xsec_token = options.xsecToken
-  }
-  if (options?.titleKeyword) {
-    params.title_keyword = options.titleKeyword
-  }
-  const response = await api.get(`/note-stats/${noteId}`, { params })
-  return response.data
-}
-
-// 自动生成内容（低AI味）
-export async function autoGenerateContent(
-  topic: string,
-  goals: string[] = ['maximize_save'],
-  audience: string = '小红书用户',
-  referenceCount: number = 10
-): Promise<{
-  content: ContentItem
-  reference_count: number
-  calibration: {
-    avg_title_length: number
-    common_patterns: string[]
-    emoji_rate: number
-    common_tags: string[]
-  }
-}> {
-  const response = await api.post('/auto-generate', null, {
-    params: { topic, goals, audience, reference_count: referenceCount }
-  })
-  return response.data
-}
-
-// AI 生成原创图片
-export async function generateImage(
-  prompt: string,
-  style: string = '小红书风格',
-  aspectRatio: string = '1:1'
-): Promise<{
-  success: boolean
-  image?: string
-  error?: string
-}> {
-  const response = await api.post('/generate-image', {
-    prompt,
-    style,
-    aspect_ratio: aspectRatio
-  })
-  return response.data
-}
-
-// 根据内容生成封面图
-export async function generateCover(
-  content: ContentItem,
-  topic: string = ''
-): Promise<{
-  success: boolean
-  image?: string
-  error?: string
-}> {
-  const response = await api.post('/generate-cover', content, {
-    params: { topic }
-  })
-  return response.data
-}
-
-// 智能扩展话题
-export async function expandTopic(briefInput: string): Promise<{
-  success: boolean
-  data: {
-    topic: string
-    detailed_topic: string
-    suggested_angles: string[]
-    target_audiences: string[]
-    content_types: string[]
-    hot_keywords: string[]
-  }
-}> {
-  const response = await api.post('/expand-topic', { brief_input: briefInput })
-  return response.data
-}
-
-
-// ============ P0 新增 API：学习引擎 ============
-
-// 获取学习引擎统计
-export async function getLearningStats(): Promise<{
-  total_records: number
-  analyzed_records: number
-  good_patterns: Record<string, number>
-  bad_patterns: Record<string, number>
-  performance_stats: {
-    avg_score: number
-    best_score: number
-    worst_score: number
-  }
-}> {
-  const response = await api.get('/learning/stats')
-  return response.data
-}
-
-// 获取学习引擎优化建议
-export async function getLearningHints(): Promise<{
-  hints: string[]
-  prompt_enhancement: string
-}> {
-  const response = await api.get('/learning/hints')
-  return response.data
-}
-
-// 记录内容到学习引擎
-export async function recordContent(
-  contentId: string,
-  title: string,
-  body: string,
-  tags: string[] = [],
-  topic: string = ''
-): Promise<{ success: boolean; message: string }> {
-  const response = await api.post('/learning/record', {
-    content_id: contentId,
-    title,
-    body,
-    tags,
-    topic
-  })
-  return response.data
-}
-
-// 更新内容效果数据
-export async function updateContentStats(
-  contentId: string,
-  stats: { likes?: number; collects?: number; comments?: number; shares?: number }
-): Promise<{ success: boolean; message: string }> {
-  const response = await api.post('/learning/update-stats', {
-    content_id: contentId,
-    stats
-  })
-  return response.data
-}
-
-
-// ============ P0 新增 API：多样性控制 ============
-
-// 获取多样性统计
-export async function getDiversityStats(): Promise<{
-  total_titles: number
-  recent_titles_count: number
-  unique_tags: number
-  top_tags: [string, number][]
-  recent_styles: string[]
-}> {
-  const response = await api.get('/diversity/stats')
-  return response.data
-}
-
-// 检查内容多样性
-export async function checkContentDiversity(
-  title: string,
-  body?: string,
-  tags?: string
-): Promise<{
-  is_valid: boolean
-  issues: string[]
-  suggestions: string[]
-}> {
-  const response = await api.get('/diversity/check', {
-    params: { title, body, tags }
-  })
-  return response.data
-}
-
-// 获取多样性提示
-export async function getDiversityPrompt(): Promise<{
-  prompt: string
-  suggested_style: string
-}> {
-  const response = await api.get('/diversity/prompt')
-  return response.data
-}
-
-
-// ============ P0 新增 API：自动监控 ============
-
-// 添加监控任务
-export async function addMonitorTask(
-  contentId: string,
-  noteId: string
-): Promise<{
-  success: boolean
-  task: { content_id: string; note_id: string; status: string }
-}> {
-  const response = await api.post('/monitor/add', {
-    content_id: contentId,
-    note_id: noteId
-  })
-  return response.data
-}
-
-// 获取监控任务列表
-export async function getMonitorTasks(): Promise<{
-  tasks: Array<{
-    content_id: string
-    note_id: string
-    status: string
-    check_count: number
-    total_checks: number
-    created_at: string
-    last_check: string | null
-    stats: Record<string, number> | null
-  }>
-  pending_count: number
-}> {
-  const response = await api.get('/monitor/tasks')
-  return response.data
-}
-
-// 手动执行一次监控检查
-export async function runMonitorOnce(): Promise<{
-  success: boolean
-  completed_count: number
-  remaining: number
-}> {
-  const response = await api.post('/monitor/run-once')
-  return response.data
-}
-
-
-// ============ P0 新增 API：AI检测规避 ============
-
-// 人性化处理内容
-export async function humanizeContent(
-  title: string,
-  body: string
-): Promise<{
-  title: string
-  body: string
-  original_score: { score: number; issues: string[]; ai_patterns_found: number }
-  new_score: { score: number; issues: string[]; ai_patterns_found: number }
-  improvement: number
-}> {
-  const response = await api.post('/humanize/content', { title, body })
-  return response.data
-}
-
-// 检查文本人性化程度
-export async function checkHumanness(text: string): Promise<{
-  score: number
-  issues: string[]
-  ai_patterns_found: number
-}> {
-  const response = await api.get('/humanize/check', { params: { text } })
-  return response.data
-}
-
-// 获取人性化写作提示
-export async function getHumanizePrompt(): Promise<{
-  prompt: string
-}> {
-  const response = await api.get('/humanize/prompt')
-  return response.data
-}
-
-
-// ============ 增强版自动生成（集成P0功能）============
-
-export async function autoGenerateEnhanced(
-  topic: string,
-  goals: string[] = ['maximize_save'],
-  audience: string = '小红书用户',
-  referenceCount: number = 10,
-  useLearning: boolean = true,
-  checkDiversity: boolean = true,
-  humanize: boolean = true
-): Promise<{
-  content: ContentItem
-  reference_count: number
-  calibration: {
-    avg_title_length: number
-    common_patterns: string[]
-    emoji_rate: number
-    common_tags: string[]
-  }
-  p0_enhancements: {
-    learning_hints_applied: number
-    diversity_check: { is_valid: boolean; issues: string[]; suggestions: string[] } | null
-    humanness_score: { score: number; issues: string[]; ai_patterns_found: number } | null
-  }
-}> {
-  const response = await api.post('/auto-generate-enhanced', null, {
-    params: {
-      topic,
-      goals,
-      audience,
-      reference_count: referenceCount,
-      use_learning: useLearning,
-      check_diversity: checkDiversity,
-      humanize
+// 请求拦截器 - 添加 Token
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
-  })
-  return response.data
-}
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
 
-// ==================== 素材库 API ====================
+// 响应拦截器 - 处理错误
+api.interceptors.response.use(
+  (response) => response,
+  async (error: AxiosError<ApiResponse<unknown>>) => {
+    if (error.response?.status === 401) {
+      // Token 过期，尝试刷新
+      const refreshToken = localStorage.getItem('refresh_token');
+      if (refreshToken) {
+        try {
+          const response = await axios.post(
+            `${import.meta.env.VITE_API_URL}/api/auth/refresh`,
+            { refresh_token: refreshToken }
+          );
+          
+          const { access_token, refresh_token } = response.data.data;
+          localStorage.setItem('access_token', access_token);
+          localStorage.setItem('refresh_token', refresh_token);
+          
+          // 重试原请求
+          if (error.config) {
+            error.config.headers.Authorization = `Bearer ${access_token}`;
+            return api.request(error.config);
+          }
+        } catch {
+          // 刷新失败，清除 Token 跳转登录
+          localStorage.removeItem('access_token');
+          localStorage.removeItem('refresh_token');
+          window.location.href = '/login';
+        }
+      } else {
+        // 没有刷新 Token，跳转登录
+        localStorage.removeItem('access_token');
+        window.location.href = '/login';
+      }
+    }
+    
+    // 显示错误消息
+    const message = error.response?.data?.message || error.message || '请求失败';
+    console.error('API Error:', message);
+    
+    return Promise.reject(error);
+  }
+);
 
+// 封装请求方法 - 返回data而不是完整的AxiosResponse
+export const request = {
+  get: <T>(url: string, config?: AxiosRequestConfig) =>
+    api.get<ApiResponse<T>>(url, config).then((res) => res.data.data),
+    
+  post: <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
+    api.post<ApiResponse<T>>(url, data, config).then((res) => res.data.data),
+    
+  put: <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
+    api.put<ApiResponse<T>>(url, data, config).then((res) => res.data.data),
+    
+  patch: <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
+    api.patch<ApiResponse<T>>(url, data, config).then((res) => res.data.data),
+    
+  delete: <T>(url: string, config?: AxiosRequestConfig) =>
+    api.delete<ApiResponse<T>>(url, config).then((res) => res.data.data),
+};
+
+// 从 endpoints.ts 导入各个 API 对象
+import { authApi, contentsApi, abTestsApi, postsApi, materialsApi, analyticsApi } from './endpoints';
+
+// 导出各个 API 对象（使用组件期望的名称）
+export const authAPI = authApi;
+export const contentAPI = contentsApi;
+export const experimentAPI = abTestsApi;
+export const postAPI = postsApi;
+export const materialAPI = materialsApi;
+export const analyticsAPI = analyticsApi;
+
+// 辅助函数 - 返回正确的数据格式
+// Health check
+export const healthCheck = () => 
+  request.get<{ status: string }>('/health');
+
+// Publish content - 返回data部分
+export const publishContent = (contentId: string, platform: string = 'xhs') => 
+  request.post<{ success: boolean; note_id: string }>(`/contents/${contentId}/publish`, { platform });
+
+// Get note stats
+export const getNoteStats = (noteId: string) => 
+  request.get<{ likes: number; saves: number; comments: number; shares: number }>(`/notes/${noteId}/stats`);
+
+// Generate cover
+export const generateCover = (content: string) => 
+  request.post<{ image: string }>('/contents/generate-cover', { content });
+
+// Sync notes
+export const syncNotes = () => 
+  request.post<{ synced_count: number }>('/notes/sync');
+
+// Auto generate enhanced
+export const autoGenerateEnhanced = (topic: string, options?: Record<string, unknown>) => 
+  request.post<{ content: string; suggestions: string[] }>('/contents/auto-generate', { topic, ...options });
+
+// Get learning stats
+export const getLearningStats = () => 
+  request.get<{
+    total_posts: number;
+    analyzed_posts: number;
+    total_engagement: Record<string, number>;
+    avg_engagement: Record<string, number>;
+    profile_updated: string | null;
+    writing_tone: string;
+    top_tags: string[];
+  }>('/learning/stats');
+
+// Get diversity stats
+export const getDiversityStats = () => 
+  request.get<{ diversity_score: number; suggestions: string[] }>('/diversity/stats');
+
+// Record content
+export const recordContent = (content: Record<string, unknown>) => 
+  request.post<{ id: string }>('/contents/record', content);
+
+// Add monitor task
+export const addMonitorTask = (task: Record<string, unknown>) => 
+  request.post<{ task_id: string }>('/monitor/tasks', task);
+
+// Get login QR code
+export const getLoginQRCode = () => 
+  request.get<{ qrcode_url: string; token: string }>('/auth/qrcode');
+
+// Check login status
+export const checkLoginStatus = (token: string) => 
+  request.get<{ logged_in: boolean; user_id?: string }>('/auth/login-status', { 
+    headers: { Authorization: `Bearer ${token}` } 
+  } as AxiosRequestConfig);
+
+// Generate variant
+export const generateVariant = (contentId: string, variantType: string) => 
+  request.post<{ variant_id: string; content: string }>(`/contents/${contentId}/variants`, { type: variantType });
+
+// Search images
+export const searchImages = (query: string) => 
+  request.get<{ images: Array<{ url: string; title: string }> }>('/images/search', { params: { q: query } } as AxiosRequestConfig);
+
+// Run crowd test
+export const runCrowdTest = (contentId: string) => 
+  request.post<{ test_id: string; status: string }>(`/contents/${contentId}/crowd-test`);
+
+// Get history stats
+export const getHistoryStats = () => 
+  request.get<{
+    total_posts: number;
+    analyzed_posts: number;
+    total_engagement: Record<string, number>;
+    avg_engagement: Record<string, number>;
+  }>('/history/stats');
+
+// Get user profile
+export const getUserProfile = () => 
+  request.get<{
+    id: string;
+    username: string;
+    avatar_url: string;
+    followers: number;
+    following: number;
+    notes_count: number;
+    writing_style?: string;
+    content_preferences?: string[];
+    performance_insights?: Record<string, unknown>;
+    last_updated?: string;
+  }>('/users/profile');
+
+// Get history posts
+export const getHistoryPosts = (params?: { page?: number; page_size?: number }) => 
+  request.get<Array<{
+    id: string;
+    title: string;
+    body: string;
+    posted_at: string;
+    performance: Record<string, number>;
+  }>>('/history/posts', { params } as AxiosRequestConfig);
+
+// Analyze history
+export const analyzeHistory = (content: string) => 
+  request.post<{ analysis: string; suggestions: string[] }>('/history/analyze', { content });
+
+// Import history from XHS
+export const importHistoryFromXHS = (data: { url: string; cookies?: string }) => 
+  request.post<{ imported_count: number }>('/history/import/xhs', data);
+
+// Get style prompt
+export const getStylePrompt = () => 
+  request.get<{ prompt: string }>('/learning/style-prompt');
+
+// Get my notes
+export const getMyNotes = (params?: { page?: number; page_size?: number }) => 
+  request.get<Array<{
+    id: string;
+    title: string;
+    status: string;
+    created_at: string;
+  }>>('/notes/my', { params } as AxiosRequestConfig);
+
+// Material functions
+export const getMaterialStats = () => 
+  request.get<{
+    total_images: number;
+    total_texts: number;
+    tags: string[];
+  }>('/materials/stats');
+
+export const addMaterialImage = (data: { url: string; tags?: string[] }) => 
+  request.post<{ id: string; url: string }>('/materials/images', data);
+
+export const getMaterialImages = (params?: { page?: number; page_size?: number }) => 
+  request.get<Array<{
+    id: string;
+    url: string;
+    path?: string;
+    filename?: string;
+    tags: string[];
+    created_at: string;
+  }>>('/materials/images', { params } as AxiosRequestConfig);
+
+export const deleteMaterialImage = (id: string) => 
+  request.delete<{ success: boolean }>(`/materials/images/${id}`);
+
+export const addMaterialText = (data: { content: string; tags?: string[] }) => 
+  request.post<{ id: string; content: string }>('/materials/texts', data);
+
+export const getMaterialTexts = (params?: { page?: number; page_size?: number }) => 
+  request.get<Array<{
+    id: string;
+    content: string;
+    text_type?: string;
+    tags: string[];
+    created_at: string;
+  }>>('/materials/texts', { params } as AxiosRequestConfig);
+
+export const deleteMaterialText = (id: string) => 
+  request.delete<{ success: boolean }>(`/materials/texts/${id}`);
+
+// Send chat message
+export const sendChatMessage = (message: string, context?: Record<string, unknown>) => 
+  request.post<{
+    message: string;
+    task_spec?: Record<string, unknown>;
+    generated_content?: string;
+  }>('/chat/message', { message, context });
+
+// Types for materials
 export interface MaterialImage {
-  id: string
-  type: string
-  filename: string
-  path: string
-  tags: string[]
-  description: string
-  source: string
-  created_at: string
-  used_count: number
+  id: string;
+  url: string;
+  path?: string;
+  filename?: string;
+  tags: string[];
+  created_at: string;
 }
 
 export interface MaterialText {
-  id: string
-  type: string
-  text_type: string
-  content: string
-  tags: string[]
-  description: string
-  source: string
-  performance: Record<string, number>
-  created_at: string
-  used_count: number
+  id: string;
+  content: string;
+  text_type?: string;
+  tags: string[];
+  created_at: string;
 }
-
-export async function getMaterialStats(): Promise<{
-  total_images: number
-  total_texts: number
-  total_collections: number
-  tags: string[]
-  text_types: Record<string, number>
-}> {
-  const response = await api.get('/materials/stats')
-  return response.data
-}
-
-export async function addMaterialImage(
-  imageData: string,
-  options?: {
-    filename?: string
-    tags?: string[]
-    description?: string
-    source?: string
-  }
-): Promise<{ success: boolean; material: MaterialImage }> {
-  const response = await api.post('/materials/images', {
-    image_data: imageData,
-    ...options
-  })
-  return response.data
-}
-
-export async function getMaterialImages(
-  tags?: string[],
-  limit: number = 20,
-  offset: number = 0
-): Promise<{ images: MaterialImage[]; total: number }> {
-  const response = await api.get('/materials/images', {
-    params: { tags: tags?.join(','), limit, offset }
-  })
-  return response.data
-}
-
-export async function getMaterialImageData(materialId: string): Promise<{ image_data: string }> {
-  const response = await api.get(`/materials/images/${materialId}`)
-  return response.data
-}
-
-export async function deleteMaterialImage(materialId: string): Promise<{ success: boolean }> {
-  const response = await api.delete(`/materials/images/${materialId}`)
-  return response.data
-}
-
-export async function addMaterialText(
-  content: string,
-  textType: string = 'copy',
-  options?: {
-    tags?: string[]
-    description?: string
-    source?: string
-    performance?: Record<string, number>
-  }
-): Promise<{ success: boolean; material: MaterialText }> {
-  const response = await api.post('/materials/texts', {
-    content,
-    text_type: textType,
-    ...options
-  })
-  return response.data
-}
-
-export async function getMaterialTexts(
-  textType?: string,
-  tags?: string[],
-  limit: number = 50,
-  offset: number = 0
-): Promise<{ texts: MaterialText[]; total: number }> {
-  const response = await api.get('/materials/texts', {
-    params: { text_type: textType, tags: tags?.join(','), limit, offset }
-  })
-  return response.data
-}
-
-export async function deleteMaterialText(materialId: string): Promise<{ success: boolean }> {
-  const response = await api.delete(`/materials/texts/${materialId}`)
-  return response.data
-}
-
-export async function getRelevantMaterials(
-  topic: string,
-  maxImages: number = 5,
-  maxTexts: number = 10
-): Promise<{ images: MaterialImage[]; texts: MaterialText[] }> {
-  const response = await api.get('/materials/relevant', {
-    params: { topic, max_images: maxImages, max_texts: maxTexts }
-  })
-  return response.data
-}
-
-// ==================== 历史发帖学习 API ====================
 
 export interface HistoryPost {
-  note_id: string
-  title: string
-  body: string
-  tags: string[]
-  cover_image?: string
-  posted_at: string
-  performance: Record<string, number>
-  analyzed: boolean
+  id: string;
+  title?: string;
+  body?: string;
+  note_id?: string;
+  posted_at?: string;
+  performance?: Record<string, number>;
+  stats?: {
+    likes: number;
+    saves: number;
+    comments: number;
+    shares: number;
+  };
+  created_at?: string;
+  content?: string;
 }
 
 export interface UserProfile {
-  writing_style: {
-    tone: string
-    emoji_density: number
-    avg_title_length: number
-    avg_body_length: number
-    paragraph_style: string
-    punctuation_style: string
-  }
-  content_preferences: {
-    favorite_topics: string[]
-    favorite_tags: string[]
-    common_hooks: string[]
-    common_endings: string[]
-  }
-  performance_insights: {
-    best_performing_topics: string[]
-    best_performing_tags: string[]
-    optimal_title_length: number
-    optimal_body_length: number
-    best_posting_time: string | null
-  }
-  last_updated: string | null
+  id: string;
+  username: string;
+  avatar_url: string;
+  followers: number;
+  following: number;
+  notes_count: number;
+  writing_style?: string;
+  content_preferences?: string[];
+  performance_insights?: Record<string, unknown>;
+  last_updated?: string;
 }
 
-export async function getHistoryStats(): Promise<{
-  total_posts: number
-  analyzed_posts: number
-  total_engagement: Record<string, number>
-  avg_engagement: Record<string, number>
-  profile_updated: string | null
-  writing_tone: string
-  top_tags: string[]
-}> {
-  const response = await api.get('/history/stats')
-  return response.data
-}
-
-export async function getUserProfile(): Promise<UserProfile> {
-  const response = await api.get('/history/profile')
-  return response.data
-}
-
-export async function getStylePrompt(): Promise<{ prompt: string }> {
-  const response = await api.get('/history/style-prompt')
-  return response.data
-}
-
-export async function addHistoryPost(post: {
-  note_id: string
-  title: string
-  body: string
-  tags: string[]
-  cover_image?: string
-  posted_at?: string
-  performance?: Record<string, number>
-}): Promise<{ success: boolean; post: HistoryPost }> {
-  const response = await api.post('/history/posts', post)
-  return response.data
-}
-
-export async function getHistoryPosts(
-  limit: number = 50,
-  offset: number = 0,
-  sortBy: string = 'posted_at'
-): Promise<{ posts: HistoryPost[]; total: number }> {
-  const response = await api.get('/history/posts', {
-    params: { limit, offset, sort_by: sortBy }
-  })
-  return response.data
-}
-
-export async function importHistoryFromXHS(
-  posts: Array<Record<string, unknown>>
-): Promise<{ success: boolean; imported_count: number }> {
-  const response = await api.post('/history/import', { posts })
-  return response.data
-}
-
-export async function updatePostPerformance(
-  noteId: string,
-  performance: Record<string, number>
-): Promise<{ success: boolean }> {
-  const response = await api.post('/history/update-performance', {
-    note_id: noteId,
-    performance
-  })
-  return response.data
-}
-
-export async function analyzeHistory(): Promise<{ success: boolean; profile: UserProfile }> {
-  const response = await api.post('/history/analyze')
-  return response.data
-}
-
-export async function getReferenceContent(
-  topic: string,
-  maxCount: number = 3
-): Promise<{ references: HistoryPost[] }> {
-  const response = await api.get('/history/reference', {
-    params: { topic, max_count: maxCount }
-  })
-  return response.data
-}
+export default api;

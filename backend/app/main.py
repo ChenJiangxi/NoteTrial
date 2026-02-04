@@ -1,11 +1,13 @@
 """
 NoteTrial Backend - FastAPI 主应用
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordRequestForm
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
+from datetime import timedelta
 import asyncio
 import uuid
 
@@ -19,6 +21,12 @@ from .services import (
     LearningEngine, DiversityController, AutoMonitor, HumanizeService,
     humanize_content, get_humanize_prompt, check_humanness,
     get_material_library, get_history_learner
+)
+from .auth import (
+    UserCreate, UserLogin, Token, UserResponse, RefreshTokenRequest, RefreshTokenResponse,
+    user_store, create_access_token, create_refresh_token, authenticate_user,
+    get_current_user, get_current_active_user,
+    format_user_response, format_token_response
 )
 
 
@@ -107,6 +115,135 @@ async def root():
         "version": "0.1.0",
         "status": "running"
     }
+
+
+# ==================== 认证 API ====================
+
+@app.post("/api/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def register(user_data: UserCreate):
+    """
+    用户注册
+    
+    - **username**: 用户名（3-50位，仅字母数字下划线）
+    - **email**: 有效邮箱地址
+    - **password**: 密码（至少6位）
+    - **confirm_password**: 确认密码
+    """
+    # 验证两次密码是否一致
+    if user_data.password != user_data.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="两次输入的密码不一致"
+        )
+    
+    # 创建用户
+    user = user_store.create_user(user_data)
+    
+    return format_user_response(user)
+
+
+@app.post("/api/auth/login", response_model=Token)
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    """
+    用户登录（OAuth2 Password Bearer Flow）
+    
+    - **username**: 用户名
+    - **password**: 密码
+    
+    返回 JWT Access Token 和 Refresh Token
+    """
+    user = authenticate_user(form_data.username, form_data.password)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户名或密码错误",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 创建 Token
+    access_token_expires = timedelta(hours=settings.access_token_expire_hours)
+    access_token = create_access_token(
+        user_id=user.id,
+        username=user.username,
+        role=user.role,
+        expires_delta=access_token_expires
+    )
+    
+    refresh_token = create_refresh_token(
+        user_id=user.id,
+        username=user.username
+    )
+    
+    # 返回 Token（实际项目中可考虑将 refresh_token 存储在 httpOnly cookie 中）
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": settings.access_token_expire_hours * 3600,
+        "refresh_token": refresh_token
+    }
+
+
+@app.post("/api/auth/refresh", response_model=RefreshTokenResponse)
+async def refresh_token(request: RefreshTokenRequest):
+    """
+    刷新 Access Token
+    
+    使用 Refresh Token 获取新的 Access Token
+    """
+    from .auth import decode_token
+    
+    try:
+        # 验证 refresh token
+        payload = decode_token(request.refresh_token)
+        
+        # 检查 token 类型
+        if payload.username is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="无效的 Refresh Token"
+            )
+        
+        # 获取用户
+        user = user_store.get_user_by_id(payload.user_id)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="用户不存在"
+            )
+        
+        # 创建新的 access token
+        access_token_expires = timedelta(hours=settings.access_token_expire_hours)
+        access_token = create_access_token(
+            user_id=user.id,
+            username=user.username,
+            role=user.role,
+            expires_delta=access_token_expires
+        )
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": settings.access_token_expire_hours * 3600
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token 刷新失败: {str(e)}"
+        )
+
+
+@app.get("/api/auth/me", response_model=UserResponse)
+async def get_current_user_info(current_user: UserResponse = Depends(get_current_active_user)):
+    """
+    获取当前登录用户信息
+    
+    需要 Authorization Header: Bearer <token>
+    """
+    return current_user
 
 
 @app.get("/api/health")
@@ -1361,6 +1498,27 @@ async def get_reference_content(topic: str, max_count: int = 3):
     learner = get_history_learner()
     refs = learner.get_reference_content(topic=topic, max_count=max_count)
     return {"references": refs}
+
+
+# ==================== API 路由模块注册 ====================
+
+# 导入 API 路由
+from .api import (
+    contents_router,
+    ab_tests_router,
+    posts_router,
+    materials_router,
+    analytics_router,
+    auth_router
+)
+
+# 注册 API 路由
+app.include_router(auth_router, prefix="/api/v1")
+app.include_router(contents_router, prefix="/api/v1")
+app.include_router(ab_tests_router, prefix="/api/v1")
+app.include_router(posts_router, prefix="/api/v1")
+app.include_router(materials_router, prefix="/api/v1")
+app.include_router(analytics_router, prefix="/api/v1")
 
 
 # 应用入口

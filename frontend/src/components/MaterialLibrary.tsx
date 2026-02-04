@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  Image, FileText, Upload, Trash2, Tag, Search,
-  FolderOpen, Plus, X, Loader2, Check, ChevronDown
+  Image, FileText, Upload, Trash2, Tag,
+  FolderOpen, Plus, X, Loader2, Check
 } from 'lucide-react'
 import {
   getMaterialStats, addMaterialImage, getMaterialImages, deleteMaterialImage,

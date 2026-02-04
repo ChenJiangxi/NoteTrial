@@ -6,7 +6,7 @@ import { Zap, Loader2 } from 'lucide-react';
 
 export default function Login() {
   const navigate = useNavigate();
-  const login = useAuthStore((state) => state.login);
+  const { setUser, setTokens } = useAuthStore();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [isRegister, setIsRegister] = useState(false);
@@ -24,15 +24,20 @@ export default function Login() {
 
     try {
       if (isRegister) {
-        await authAPI.register(formData);
+        await authAPI.register({
+          email: formData.email,
+          password: formData.password,
+          nickname: formData.username,
+        });
         setIsRegister(false);
         setError('注册成功，请登录');
       } else {
-        const { data } = await authAPI.login({
-          username: formData.username,
+        const response = await authAPI.login({
+          email: formData.email,
           password: formData.password,
         });
-        login(data.user, data.token);
+        setUser(response.user);
+        setTokens(response.access_token, response.token_type);
         navigate('/dashboard');
       }
     } catch (err: any) {
@@ -48,84 +53,101 @@ export default function Login() {
         <div className="bg-white rounded-2xl shadow-xl p-8">
           {/* Logo */}
           <div className="flex items-center justify-center gap-3 mb-8">
-            <div className="w-12 h-12 bg-[#ff2442] rounded-xl flex items-center justify-center shadow-lg shadow-red-200">
-              <Zap className="w-7 h-7 text-white fill-current" />
+            <div className="w-12 h-12 bg-gradient-to-br from-violet-500 to-purple-600 rounded-xl flex items-center justify-center">
+              <Zap className="w-6 h-6 text-white" />
             </div>
-            <h1 className="text-2xl font-bold text-slate-800">NoteTrial</h1>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">NoteTrial</h1>
+              <p className="text-sm text-slate-500">智能内容创作平台</p>
+            </div>
           </div>
 
+          {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                {isRegister ? '用户名' : '用户名或邮箱'}
-              </label>
-              <input
-                type="text"
-                value={formData.username}
-                onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442]"
-                placeholder="请输入用户名"
-                required
-              />
-            </div>
+            {error && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                {error}
+              </div>
+            )}
 
             {isRegister && (
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  邮箱
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  昵称
                 </label>
                 <input
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442]"
-                  placeholder="请输入邮箱"
-                  required
+                  type="text"
+                  value={formData.username}
+                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                  className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all outline-none"
+                  placeholder="设置您的昵称"
+                  required={isRegister}
                 />
               </div>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                邮箱
+              </label>
+              <input
+                type="email"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all outline-none"
+                placeholder="请输入邮箱"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
                 密码
               </label>
               <input
                 type="password"
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442]"
+                className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all outline-none"
                 placeholder="请输入密码"
                 required
               />
             </div>
 
-            {error && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
-                {error}
-              </div>
-            )}
-
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full py-3 bg-[#ff2442] text-white font-semibold rounded-xl hover:bg-[#e61f3d] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="w-full py-2.5 px-4 bg-gradient-to-r from-violet-500 to-purple-600 text-white font-medium rounded-lg hover:from-violet-600 hover:to-purple-700 focus:ring-4 focus:ring-violet-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-              {isLoading && <Loader2 className="w-5 h-5 animate-spin" />}
-              {isRegister ? '注 册' : '登 录'}
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                isRegister ? '注册' : '登录'
+              )}
             </button>
+
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsRegister(!isRegister);
+                  setError('');
+                }}
+                className="text-sm text-violet-600 hover:text-violet-700 font-medium"
+              >
+                {isRegister ? '已有账号？立即登录' : '没有账号？立即注册'}
+              </button>
+            </div>
           </form>
 
-          <div className="mt-6 text-center">
-            <button
-              type="button"
-              onClick={() => {
-                setIsRegister(!isRegister);
-                setError('');
-              }}
-              className="text-sm text-slate-500 hover:text-[#ff2442] transition-colors"
-            >
-              {isRegister ? '已有账号？去登录' : '没有账号？立即注册'}
-            </button>
+          {/* Footer */}
+          <div className="mt-8 pt-6 border-t border-slate-100 text-center">
+            <p className="text-xs text-slate-400">
+              登录即表示同意
+              <a href="#" className="text-violet-600 hover:underline mx-1">服务条款</a>
+              和
+              <a href="#" className="text-violet-600 hover:underline mx-1">隐私政策</a>
+            </p>
           </div>
         </div>
       </div>

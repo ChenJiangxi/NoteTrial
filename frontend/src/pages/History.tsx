@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { contentAPI, experimentAPI } from '../services/api';
 import {
-  Clock, FileText, BarChart3, Play, Trash2, Eye,
-  ChevronRight, Search, Filter, ArrowUpDown
+  Clock, FileText, BarChart3, Play, Trash2,
+  ChevronRight, Search
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';

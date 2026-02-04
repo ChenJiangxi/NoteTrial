@@ -1,5 +1,5 @@
 /** @type {import('tailwindcss').Config} */
-module.exports = {
+export default {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -7,8 +7,23 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        'xhs-red': '#ff2442',
-        'xhs-pink': '#ff6b81',
+        primary: {
+          50: '#fff1f2',
+          100: '#ffe4e6',
+          200: '#fecdd3',
+          300: '#fda4af',
+          400: '#fb7185',
+          500: '#f43f5e',
+          600: '#e11d48',
+          700: '#be123c',
+          800: '#9f1239',
+          900: '#881337',
+          DEFAULT: '#FF2442', // 小红书红
+        },
+      },
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        chinese: ['Inter', 'Noto Sans SC', 'system-ui', 'sans-serif'],
       },
     },
   },

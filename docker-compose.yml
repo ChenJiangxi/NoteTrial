@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://notetrial:notetrial@postgres:5432/notetrial
+      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
+      - REDIS_URL=redis://redis:6379/0
+      - MCP_URL=http://mcp:18060/mcp
+    depends_on:
+      - postgres
+      - redis
+      - mcp
+    volumes:
+      - ./data:/app/data
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=notetrial
+      - POSTGRES_PASSWORD=notetrial
+      - POSTGRES_DB=notetrial
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  mcp:
+    image: xpzouying/xiaohongshu-mcp:latest
+    ports:
+      - "18060:18060"
+    environment:
+      - COOKIES_DIR=/app/cookies
+      - DATA_DIR=/app/data
+    volumes:
+      - mcp_data:/app
+
+volumes:
+  postgres_data:
+  redis_data:
+  mcp_data:
