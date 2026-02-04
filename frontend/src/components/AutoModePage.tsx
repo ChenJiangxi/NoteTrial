@@ -642,14 +642,8 @@ export default function AutoModePage({ onBack }: AutoModePageProps) {
       })
       console.log('MCP返回笔记数据:', result)
       
-      // 检查是否有错误
-      if (result.result?.error) {
-        console.log('获取笔记数据失败:', result.result.error)
-        addLog(`⚠ 获取数据失败: ${result.result.error}`)
-        return
-      }
-      
-      const content = result.result?.content?.[0]?.text
+      // 检查是否有错误 - API 直接返回数据，不再包装在 result 中
+      const content = typeof result === 'string' ? result : (result as any).result?.content?.[0]?.text || (result as any).content
       
       if (content) {
         let newStats = { likes: 0, collects: 0, comments: 0, views: 0 }

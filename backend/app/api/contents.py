@@ -25,6 +25,7 @@ class ContentGenerationRequest(BaseModel):
     audience: str = Field(default="小红书用户", description="目标受众")
     tone: List[str] = Field(default_factory=lambda: ["真实", "口语化"], description="语气约束")
     reference_count: int = Field(default=10, ge=1, le=20, description="参考内容数量")
+    use_materials: bool = Field(default=False, description="是否使用素材库素材")
 
 
 class ContentGenerationResponse(BaseModel):
@@ -37,9 +38,6 @@ class ContentGenerationResponse(BaseModel):
 class BulkCreateRequest(BaseModel):
     """批量创建请求"""
     contents: List[ContentCreate]
-
-
-@router.get("", response_model=PaginatedResponse[Content])
 async def list_contents(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
@@ -249,4 +247,104 @@ async def update_content_status(
     return StandardResponse(
         data=content,
         message=f"状态更新为 {status}"
+    )
+
+
+# ===================== 素材库生成相关端点 =====================
+
+class GenerateWithMaterialsRequest(BaseModel):
+    """使用素材库生成内容请求"""
+    topic: str = Field(..., description="创作话题")
+    goals: List[str] = Field(default=["收藏率"], description="优化目标")
+    audience: str = Field(default="小红书用户", description="目标受众")
+    tone: List[str] = Field(default_factory=lambda: ["真实", "口语化"], description="语气约束")
+    max_images: int = Field(default=5, ge=1, le=10, description="最大使用图片素材数量")
+    max_texts: int = Field(default=10, ge=1, le=20, description="最大使用文案素材数量")
+
+
+class GenerateWithMaterialsResponse(BaseModel):
+    """使用素材库生成内容响应"""
+    content: Dict[str, Any]
+    materials_used: Dict[str, Any]
+    generated_at: datetime
+
+
+@router.post("/generate-with-materials", response_model=StandardResponse[GenerateWithMaterialsResponse])
+async def generate_with_materials(
+    request: GenerateWithMaterialsRequest,
+    current_user: dict = Depends(get_current_user)
+) -> StandardResponse[GenerateWithMaterialsResponse]:
+    """
+    使用素材库素材生成内容
+
+    - 自动从素材库获取与话题相关的素材
+    - 将素材融入 AI 生成过程
+    - 返回生成内容及使用的素材信息
+    """
+    # TODO: 集成 ViralGenerator 和素材库 API
+    # 实际实现需要：
+    # 1. 调用素材库 API 获取相关素材
+    # 2. 使用 ViralGenerator 生成内容，传入素材
+    # 3. 返回生成结果和使用的素材信息
+
+    # 模拟生成结果
+    generated_content = {
+        "title": f"【素材增强】{request.topic}的爆款笔记",
+        "body": f"这是基于素材库生成的关于{request.topic}的正文内容...",
+        "tags": [request.topic, "素材生成", "推荐"]
+    }
+
+    # 模拟使用的素材信息
+    materials_used = {
+        "images_count": 3,
+        "texts_count": 5,
+        "images": [
+            {"id": "img1", "description": "防晒霜产品图", "tags": ["防晒", "夏天"]}
+        ],
+        "texts": [
+            {"id": "txt1", "content": "夏日防晒必备神器", "text_type": "hook"}
+        ]
+    }
+
+    response = GenerateWithMaterialsResponse(
+        content=generated_content,
+        materials_used=materials_used,
+        generated_at=datetime.utcnow()
+    )
+
+    return StandardResponse(
+        data=response,
+        message="使用素材库生成内容成功"
+    )
+
+
+@router.get("/relevant-materials/{topic}", response_model=StandardResponse)
+async def get_relevant_materials_for_content(
+    topic: str,
+    max_images: int = 5,
+    max_texts: int = 10,
+    current_user: dict = Depends(get_current_user)
+) -> StandardResponse:
+    """
+    获取用于内容生成的相关素材
+
+    - 根据话题获取相关素材
+    - 可用于预览即将使用的素材
+    """
+    # TODO: 调用素材库 API 获取相关素材
+    # 这里应该调用 /api/v1/materials/relevant 端点
+
+    relevant_materials = {
+        "topic": topic,
+        "images": [
+            {"id": "img1", "description": "示例图片", "tags": [topic]}
+        ],
+        "texts": [
+            {"id": "txt1", "content": "示例文案", "text_type": "hook"}
+        ]
+    }
+
+    return StandardResponse(
+        data=relevant_materials,
+        message=f"获取话题「{topic}」的相关素材成功"
     )

@@ -1,5 +1,6 @@
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 import type { ApiResponse } from '@/types';
+import type { ContentItem } from '../types/api';
 
 // 创建 axios 实例
 const api: AxiosInstance = axios.create({
@@ -97,64 +98,82 @@ export const postAPI = postsApi;
 export const materialAPI = materialsApi;
 export const analyticsAPI = analyticsApi;
 
-// 辅助函数 - 返回正确的数据格式
+// API 响应包装器 - 将 API 返回包装成组件期望的格式
+const wrapResponse = <T>(data: T): { result: { content: T } } => ({
+  result: { content: data as unknown as string }
+});
+
 // Health check
 export const healthCheck = () => 
-  request.get<{ status: string }>('/health');
+  request.get<{ status: string; services?: Record<string, boolean> }>('/health');
 
-// Publish content - 返回data部分
-export const publishContent = (contentId: string, platform: string = 'xhs') => 
-  request.post<{ success: boolean; note_id: string }>(`/contents/${contentId}/publish`, { platform });
+// Publish content - 返回包装后的结果
+export const publishContent = (content: ContentItem) => 
+  request.post<{ success: boolean; note_id: string; message?: string; data?: { xsecToken?: string } }>('/contents/publish', content);
 
 // Get note stats
-export const getNoteStats = (noteId: string) => 
-  request.get<{ likes: number; saves: number; comments: number; shares: number }>(`/notes/${noteId}/stats`);
+export const getNoteStats = (noteId: string, options?: { xsecToken?: string; titleKeyword?: string }) => 
+  request.get<{ result: { content: string } }>(`/notes/${noteId}/stats`, { params: options } as AxiosRequestConfig);
 
 // Generate cover
-export const generateCover = (content: string) => 
-  request.post<{ image: string }>('/contents/generate-cover', { content });
+export const generateCover = (content: ContentItem, topic: string) => 
+  request.post<{ success: boolean; image?: string; error?: string }>('/contents/generate-cover', { content, topic });
 
 // Sync notes
-export const syncNotes = () => 
-  request.post<{ synced_count: number }>('/notes/sync');
+export const syncNotes = (titles: string[]) => 
+  request.post<{ error?: string; notes: Array<{ matchedTitle?: string; title?: string; noteId?: string; xsecToken?: string; likedCount?: string | number; collectedCount?: string | number; commentCount?: string | number }> }>('/notes/sync', { titles });
 
 // Auto generate enhanced
-export const autoGenerateEnhanced = (topic: string, options?: Record<string, unknown>) => 
-  request.post<{ content: string; suggestions: string[] }>('/contents/auto-generate', { topic, ...options });
+export const autoGenerateEnhanced = (
+  topic: string, 
+  goals: string[], 
+  audience: string, 
+  count: number,
+  useLearning: boolean,
+  checkDiversity: boolean,
+  useHumanize: boolean
+) => 
+  request.post<{ 
+    content: ContentItem; 
+    reference_count?: number;
+    p0_enhancements?: {
+      learning_hints_applied?: number;
+      diversity_check?: { is_valid: boolean; issues: string[] };
+      humanness_score?: { score: number; issues: string[] };
+    };
+  }>('/contents/auto-generate', { topic, goals, audience, count, use_learning: useLearning, check_diversity: checkDiversity, use_humanize: useHumanize });
 
 // Get learning stats
 export const getLearningStats = () => 
   request.get<{
-    total_posts: number;
-    analyzed_posts: number;
-    total_engagement: Record<string, number>;
-    avg_engagement: Record<string, number>;
-    profile_updated: string | null;
-    writing_tone: string;
-    top_tags: string[];
+    total_records: number;
+    analyzed_posts?: number;
+    total_engagement?: Record<string, number>;
+    avg_engagement?: Record<string, number>;
+    profile_updated?: string | null;
+    writing_tone?: string;
+    top_tags?: string[];
   }>('/learning/stats');
 
 // Get diversity stats
 export const getDiversityStats = () => 
-  request.get<{ diversity_score: number; suggestions: string[] }>('/diversity/stats');
+  request.get<{ unique_tags?: number; diversity_score?: number; suggestions?: string[] }>('/diversity/stats');
 
 // Record content
-export const recordContent = (content: Record<string, unknown>) => 
-  request.post<{ id: string }>('/contents/record', content);
+export const recordContent = (id: string, title: string, body: string, tags: string[], topic: string) => 
+  request.post<{ id: string }>('/contents/record', { id, title, body, tags, topic });
 
 // Add monitor task
-export const addMonitorTask = (task: Record<string, unknown>) => 
-  request.post<{ task_id: string }>('/monitor/tasks', task);
+export const addMonitorTask = (id: string, noteId: string) => 
+  request.post<{ task_id: string }>('/monitor/tasks', { id, note_id: noteId });
 
 // Get login QR code
 export const getLoginQRCode = () => 
-  request.get<{ qrcode_url: string; token: string }>('/auth/qrcode');
+  request.get<{ qrcode_url?: string; token?: string; result?: { content?: Array<{ text?: string }> } }>('/auth/qrcode');
 
 // Check login status
-export const checkLoginStatus = (token: string) => 
-  request.get<{ logged_in: boolean; user_id?: string }>('/auth/login-status', { 
-    headers: { Authorization: `Bearer ${token}` } 
-  } as AxiosRequestConfig);
+export const checkLoginStatus = () => 
+  request.get<{ logged_in: boolean; user_id?: string; result?: { content?: Array<{ text?: string }> } }>('/auth/login-status');
 
 // Generate variant
 export const generateVariant = (contentId: string, variantType: string) => 

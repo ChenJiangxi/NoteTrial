@@ -909,6 +909,103 @@ class AIHumanizer:
 # 第三部分：多模型投票生成器
 # ============================================================================
 
+class MaterialService:
+    """
+    素材库服务
+
+    功能：
+    1. 从素材库获取相关素材
+    2. 将素材融入生成内容
+    3. 格式化素材数据
+
+    特点：
+    - 支持图片和文案素材
+    - 根据话题智能匹配
+    - 返回格式化后的素材信息
+    """
+
+    def __init__(self, materials_api_url: str = None):
+        """
+        初始化素材服务
+
+        Args:
+            materials_api_url: 素材库 API 地址（可选，用于 HTTP 调用）
+        """
+        self.materials_api_url = materials_api_url
+
+    async def get_relevant_materials(
+        self,
+        topic: str,
+        max_images: int = 5,
+        max_texts: int = 10
+    ) -> Dict[str, Any]:
+        """
+        获取与话题相关的素材
+
+        Args:
+            topic: 话题关键词
+            max_images: 最大图片数量
+            max_texts: 最大文案数量
+
+        Returns:
+            相关素材字典
+        """
+        # 注意：实际实现时，这里可以通过 HTTP 调用素材库 API
+        # 或者通过依赖注入获取素材库服务实例
+        #
+        # 示例返回格式：
+        # {
+        #     "images": [
+        #         {"id": "xxx", "image_data": "base64...", "tags": ["防晒", "夏天"]}
+        #     ],
+        #     "texts": [
+        #         {"id": "xxx", "content": "文案内容", "text_type": "hook"}
+        #     ]
+        # }
+
+        return {"images": [], "texts": []}
+
+    def format_materials_for_prompt(
+        self,
+        materials: Dict[str, Any],
+        include_images: bool = True
+    ) -> str:
+        """
+        将素材格式化为 prompt 的一部分
+
+        Args:
+            materials: 素材字典
+            include_images: 是否包含图片信息
+
+        Returns:
+            格式化的素材描述
+        """
+        formatted_parts = []
+
+        # 格式化文案素材
+        texts = materials.get("texts", [])
+        if texts:
+            formatted_parts.append("【相关文案素材】")
+            for i, text in enumerate(texts, 1):
+                content = text.get("content", "")
+                text_type = text.get("text_type", "copy")
+                formatted_parts.append(f"{i}. [{text_type}] {content}")
+
+        # 格式化图片素材
+        if include_images:
+            images = materials.get("images", [])
+            if images:
+                formatted_parts.append("【相关图片素材】")
+                for i, img in enumerate(images, 1):
+                    tags = img.get("tags", [])
+                    desc = img.get("description", "")
+                    formatted_parts.append(
+                        f"{i}. 图片标签: {', '.join(tags)} - 描述: {desc}"
+                    )
+
+        return "\n".join(formatted_parts) if formatted_parts else ""
+
+
 class MultiModelVoter:
     """
     多模型投票生成器
@@ -929,7 +1026,8 @@ class MultiModelVoter:
         openai_client=None,
         anthropic_client=None,
         google_client=None,
-        default_model: str = "gpt-4o"
+        default_model: str = "gpt-4o",
+        material_service: MaterialService = None
     ):
         """
         初始化 MultiModelVoter
@@ -946,6 +1044,7 @@ class MultiModelVoter:
             "gemini-pro": google_client,
         }
         self.default_model = default_model
+        self.material_service = material_service or MaterialService()
 
     async def generate_with_voting(
         self,
@@ -1187,6 +1286,77 @@ class MultiModelVoter:
         }
 
         return best_result, voting_details
+
+    async def get_materials_for_topic(
+        self,
+        topic: str,
+        max_images: int = 5,
+        max_texts: int = 10
+    ) -> Dict[str, Any]:
+        """
+        获取话题相关的素材
+
+        Args:
+            topic: 话题关键词
+            max_images: 最大图片数量
+            max_texts: 最大文案数量
+
+        Returns:
+            相关素材
+        """
+        if self.material_service:
+            return await self.material_service.get_relevant_materials(
+                topic=topic,
+                max_images=max_images,
+                max_texts=max_texts
+            )
+        return {"images": [], "texts": []}
+
+    def enhance_prompt_with_materials(
+        self,
+        topic: str,
+        base_prompt: str,
+        materials: Dict[str, Any]
+    ) -> str:
+        """
+        将素材融入到 prompt 中
+
+        Args:
+            topic: 话题
+            base_prompt: 基础 prompt
+            materials: 素材字典
+
+        Returns:
+            增强后的 prompt
+        """
+        if not materials or (
+            not materials.get("images") and not materials.get("texts")
+        ):
+            return base_prompt
+
+        # 获取格式化的素材描述
+        materials_section = self.material_service.format_materials_for_prompt(
+            materials,
+            include_images=True
+        )
+
+        if not materials_section:
+            return base_prompt
+
+        # 构建增强后的 prompt
+        enhanced_prompt = f"""{base_prompt}
+
+以下是与话题「{topic}」相关的素材库素材，请在生成内容时参考这些素材，融入相关内容：
+
+{materials_section}
+
+要求：
+- 参考素材的风格和表达方式
+- 如有图片素材，提及相关视觉元素
+- 保持素材中的核心信息准确
+"""
+
+        return enhanced_prompt
 
     def _score_titles(self, results: List[Dict]) -> List[float]:
         """
@@ -1691,6 +1861,9 @@ class ViralGenerator:
         # 初始化 AI 人性化工具
         self.humanizer = AIHumanizer(client=openai_client, model=model)
 
+        # 初始化素材服务
+        self.material_service = MaterialService()
+
         # 初始化质量评估工具
         self.assessor = QualityAssessor(client=openai_client, model=model)
 
@@ -1760,7 +1933,8 @@ class ViralGenerator:
         goal: str = "收藏率",
         body_type: BodyType = None,
         tone: str = "真实、不营销",
-        temperature: float = 0.9
+        temperature: float = 0.9,
+        materials: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
         生成爆款正文
@@ -1772,6 +1946,7 @@ class ViralGenerator:
             body_type: 正文类型（可选，不指定则随机选择）
             tone: 语气风格
             temperature: 温度参数
+            materials: 素材库素材（可选，用于融入内容）
 
         Returns:
             生成结果和投票详情
@@ -1792,6 +1967,14 @@ class ViralGenerator:
         # 组合完整提示词
         type_prompt = PROMPT_TEMPLATES["body"].get(body_type, PROMPT_TEMPLATES["body"][BodyType.TUTORIAL])
         full_prompt = f"{PROMPT_TEMPLATES['body']['system_prompt']}\n\n{type_prompt}\n\n【任务信息】\n- 话题：{topic}\n- 受众：{audience}\n- 目标：{goal_text}\n- 语气：{tone}"
+
+        # 如果提供了素材，融入到 prompt 中
+        if materials and self.voter.material_service:
+            full_prompt = self.voter.enhance_prompt_with_materials(
+                topic=topic,
+                base_prompt=full_prompt,
+                materials=materials
+            )
 
         # 使用多模型投票生成
         result = await self.voter.generate_with_voting(
@@ -1820,7 +2003,8 @@ class ViralGenerator:
         body_type: BodyType = None,
         temperature: float = 0.9,
         do_humanize: bool = True,
-        do_assess: bool = True
+        do_assess: bool = True,
+        auto_use_materials: bool = False
     ) -> Dict[str, Any]:
         """
         生成完整内容（标题 + 正文）
@@ -1834,10 +2018,22 @@ class ViralGenerator:
             temperature: 温度参数
             do_humanize: 是否进行人性化处理
             do_assess: 是否进行质量评估
+            auto_use_materials: 是否自动使用素材库素材
 
         Returns:
             完整生成结果
         """
+        materials = {}
+        enhanced_prompt_body = None
+
+        # 如果启用自动使用素材，从素材库获取相关素材
+        if auto_use_materials and self.voter.material_service:
+            materials = await self.voter.material_service.get_relevant_materials(
+                topic=topic,
+                max_images=5,
+                max_texts=10
+            )
+
         # 生成标题
         title_result = await self.generate_title(
             topic=topic,
@@ -1847,13 +2043,14 @@ class ViralGenerator:
             temperature=temperature
         )
 
-        # 生成正文
+        # 生成正文（可选择融入素材）
         body_result = await self.generate_body(
             topic=topic,
             audience=audience,
             goal=goal,
             body_type=body_type,
-            temperature=temperature
+            temperature=temperature,
+            materials=materials if auto_use_materials else None
         )
 
         # 组合结果
@@ -1872,6 +2069,14 @@ class ViralGenerator:
             "title_result": title_result,
             "body_result": body_result,
         }
+
+        # 如果使用了素材，添加到结果中
+        if materials:
+            result["used_materials"] = {
+                "images_count": len(materials.get("images", [])),
+                "texts_count": len(materials.get("texts", [])),
+                "materials": materials
+            }
 
         # 质量评估
         if do_assess and final_title and final_body:
