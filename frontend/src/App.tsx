@@ -1,19 +1,17 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+﻿import { useEffect, useState, useRef, useCallback } from 'react'
 import { 
   Zap, Send, Loader2, Sparkles, Play, Image as ImageIcon, Wand2,
   Share2, Paperclip, X, FileText, Upload, Plus, Search,
   Layout, Smartphone, ChevronRight, UserCircle2, BarChart3, GripVertical, Home
 } from 'lucide-react'
 import { useApp } from './contexts/AppContext'
-import { healthCheck, sendChatMessage, generateVariant, startCrowdTest, getCrowdTestProgress, publishContent } from './services/api'
-import type { ContentItem, CrowdTestResult } from './types/api'
+import { healthCheck, sendChatMessage, generateVariant, startCrowdTest, getCrowdTestProgress, publishContent, searchImages } from './services/api'
+import type { ContentItem, MultiCrowdTestResult } from './types/api'
 import WelcomePage from './components/WelcomePage'
 import AutoModePage from './components/AutoModePage'
 
-// 应用模式类型
 type AppMode = 'welcome' | 'interactive' | 'auto'
 
-// 分隔条组件
 function Resizer({ onDrag, side }: { onDrag: (delta: number) => void; side: 'left' | 'right' }) {
   const [isDragging, setIsDragging] = useState(false)
   const startX = useRef(0)
@@ -32,7 +30,6 @@ function Resizer({ onDrag, side }: { onDrag: (delta: number) => void; side: 'lef
     const handleMouseMove = (e: MouseEvent) => {
       const delta = e.clientX - startX.current
       startX.current = e.clientX
-      // 左侧分隔条向右拖动增加宽度，右侧分隔条向左拖动增加宽度
       onDrag(side === 'left' ? delta : -delta)
     }
     
@@ -62,7 +59,7 @@ function Resizer({ onDrag, side }: { onDrag: (delta: number) => void; side: 'lef
         <GripVertical className="w-4 h-4 text-slate-400" />
       </div>
     </div>
-  )
+           )
 }
 
 function App() {
@@ -71,32 +68,31 @@ function App() {
     setTaskSpec, setContentA, setContentB, addMessage, setMessages,
   } = useApp()
   
-  // 应用模式状态
   const [appMode, setAppMode] = useState<AppMode>('welcome')
   
   const [isConnected, setIsConnected] = useState(false)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isGeneratingB, setIsGeneratingB] = useState(false)
-  const [testResult, setTestResult] = useState<CrowdTestResult | null>(null)
+  const [testResult, setTestResult] = useState<MultiCrowdTestResult | null>(null)
   const [isRunningTest, setIsRunningTest] = useState(false)
   const [simulationProgress, setSimulationProgress] = useState(0)
   const [isPublishing, setIsPublishing] = useState(false)
-  const audiencePresets = ['核心用户', '泛兴趣用户', '实用派', '互动派', '传播派']
+  const audiencePresets = ['核心用户', '泛兴趣用户', '实用流', '互动流', '传播流']
   const [selectedAudienceTags, setSelectedAudienceTags] = useState<string[]>(audiencePresets)
   const [customAudienceInput, setCustomAudienceInput] = useState('')
   const [customAudienceTags, setCustomAudienceTags] = useState<string[]>([])
+  const [selectedTestVersions, setSelectedTestVersions] = useState<string[]>(['Version A', 'Version B'])
   const [uploadedFile, setUploadedFile] = useState<{ name: string; content: string } | null>(null)
+  const [extraVersions, setExtraVersions] = useState<Array<{ id: string; label: string; content: ContentItem; baseVersionLabel: string }>>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   
-  // 三栏宽度状态
   const [leftWidth, setLeftWidth] = useState(384) // 默认 384px (w-96)
   const [rightWidth, setRightWidth] = useState(384)
   const MIN_WIDTH = 280
   const MAX_WIDTH = 600
   
-  // 拖拽处理
   const handleLeftResize = useCallback((delta: number) => {
     setLeftWidth(w => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, w + delta)))
   }, [])
@@ -105,7 +101,6 @@ function App() {
     setRightWidth(w => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, w + delta)))
   }, [])
 
-  // 检查服务连接
   useEffect(() => {
     const check = async () => {
       try {
@@ -120,16 +115,13 @@ function App() {
     return () => clearInterval(interval)
   }, [])
 
-  // 自动滚动到最新消息
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // 发送消息
   const handleSend = async () => {
     if ((!input.trim() && !uploadedFile) || isLoading) return
     
-    // 构建消息内容
     let messageContent = input.trim()
     if (uploadedFile) {
       messageContent = `[上传文件: ${uploadedFile.name}]\n\n${uploadedFile.content}\n\n${messageContent}`
@@ -154,12 +146,10 @@ function App() {
     }
   }
 
-  // 处理文件上传 (Chat) - 支持更多文件格式
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     
-    // 支持的文件格式
     const textTypes = ['.txt', '.md', '.json', '.csv', '.xml', '.html', '.css', '.js', '.ts']
     const docTypes = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']
     const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'))
@@ -168,25 +158,22 @@ function App() {
     const isDocFile = docTypes.includes(ext)
     
     if (!isTextFile && !isDocFile) {
-      alert('支持的文件格式：\n• 文本：txt, md, json, csv\n• 文档：pdf, doc, docx, xls, xlsx, ppt, pptx')
+      alert('\u652f\u6301\u7684\u6587\u4ef6\u683c\u5f0f\uff1a\n\u2022 \u6587\u672c\uff1atxt, md, json, csv\n\u2022 \u6587\u6863\uff1apdf, doc, docx, xls, xlsx, ppt, pptx')
       return
     }
     
-    // 文档类文件限制 5MB，文本类限制 500KB
     const maxSize = isDocFile ? 5 * 1024 * 1024 : 500 * 1024
     if (file.size > maxSize) {
-      alert(`文件大小不能超过 ${isDocFile ? '5MB' : '500KB'}`)
+      alert(`\u6587\u4ef6\u5927\u5c0f\u4e0d\u80fd\u8d85\u8fc7 ${isDocFile ? '5MB' : '500KB'}`)
       return
     }
     
     if (isDocFile) {
-      // 对于 PDF/Office 文件，只记录文件名（后端需要处理解析）
       setUploadedFile({ 
         name: file.name, 
-        content: `[文档文件: ${file.name}]\n\n注意：这是一个 ${ext.toUpperCase()} 文件。请在对话中描述文件的主要内容，或者将关键信息复制粘贴到这里。` 
+        content: `[\u6587\u6863\u6587\u4ef6: ${file.name}]\n\n\u6ce8\u610f\uff1a\u8fd9\u662f\u4e00\u4e2a ${ext.toUpperCase()} \u6587\u4ef6\u3002\u8bf7\u5728\u5bf9\u8bdd\u4e2d\u63cf\u8ff0\u6587\u4ef6\u7684\u4e3b\u8981\u5185\u5bb9\uff0c\u6216\u8005\u5c06\u5173\u952e\u4fe1\u606f\u590d\u5236\u7c98\u8d34\u5230\u8fd9\u91cc\u3002`,
       })
     } else {
-      // 文本文件直接读取内容
       const reader = new FileReader()
       reader.onload = (event) => {
         const content = event.target?.result as string
@@ -196,9 +183,124 @@ function App() {
     }
     e.target.value = ''
   }
+  const getNextVersionLabel = (existingCount: number) => {
+    return 'Version ' + String.fromCharCode(67 + existingCount)
+  }
+  const getVersionContentByLabel = (label?: string) => {
+    const targetLabel = label && label.trim() ? label : 'Version A'
+    if (targetLabel === 'Version A') return contentA
+    if (targetLabel === 'Version B') return contentB
+    return extraVersions.find(v => v.label === targetLabel)?.content || null
+  }
 
-  // 生成版本B
-  const handleGenerateB = async () => {
+  const getBaseOptionsForExtra = (currentId: string) => {
+    const options: string[] = ['Version A']
+    if (contentB.title || contentB.body) options.push('Version B')
+    for (const v of extraVersions) {
+      if (v.id !== currentId && (v.content.title || v.content.body)) {
+        options.push(v.label)
+      }
+    }
+    return options
+  }
+
+  const normalizeVersions = (nextContentB: ContentItem, nextExtras: Array<{ id: string; label: string; content: ContentItem; baseVersionLabel: string }>) => {
+    let contentBNext = nextContentB
+    let extrasNext = [...nextExtras]
+
+    if ((!contentBNext.title && !contentBNext.body) && extrasNext.length > 0) {
+      const [first, ...rest] = extrasNext
+      contentBNext = first.content
+      extrasNext = rest
+    }
+
+    const relabeled = extrasNext.map((v, idx) => ({
+      ...v,
+      label: `Version ${String.fromCharCode(67 + idx)}`,
+    }))
+
+    const allowed = new Set(['Version A'])
+    if (contentBNext.title || contentBNext.body) allowed.add('Version B')
+    for (const v of relabeled) allowed.add(v.label)
+
+    const fixed = relabeled.map(v => ({
+      ...v,
+      baseVersionLabel: v.baseVersionLabel && allowed.has(v.baseVersionLabel)
+        ? v.baseVersionLabel
+        : (allowed.has('Version B') ? 'Version B' : 'Version A'),
+    }))
+
+    return { contentB: contentBNext, extras: fixed }
+  }
+
+  const handleDeleteVersionB = () => {
+    const emptyB: ContentItem = { title: '', body: '', cover_image: '', tags: [] }
+    const normalized = normalizeVersions(emptyB, extraVersions)
+    setContentB(normalized.contentB)
+    setExtraVersions(normalized.extras)
+    setTestResult(null)
+  }
+
+  const handleDeleteVersionA = () => {
+    if (!contentB.title && !contentB.body) return
+    const emptyB: ContentItem = { title: '', body: '', cover_image: '', tags: [] }
+    setContentA(contentB)
+    const normalized = normalizeVersions(emptyB, extraVersions)
+    setContentB(normalized.contentB)
+    setExtraVersions(normalized.extras)
+    setTestResult(null)
+  }
+
+  const nonEmptyCount = [
+    contentA,
+    contentB,
+    ...extraVersions.map(v => v.content),
+  ].filter(item => item.title || item.body).length
+  const canDeleteAny = nonEmptyCount > 1
+
+  const handleDeleteExtra = (versionId: string) => {
+    const filtered = extraVersions.filter(v => v.id !== versionId)
+    const normalized = normalizeVersions(contentB, filtered)
+    setContentB(normalized.contentB)
+    setExtraVersions(normalized.extras)
+    setTestResult(null)
+  }
+
+
+  const handleAddVersion = () => {
+    const defaultBase = extraVersions.length > 0
+      ? extraVersions[extraVersions.length - 1].label
+      : (contentB.title ? 'Version B' : 'Version A')
+
+    setExtraVersions(prev => ([
+      ...prev,
+      {
+        id: `v-${Date.now()}-${prev.length}`,
+        label: getNextVersionLabel(prev.length),
+        content: { title: '', body: '', cover_image: '', tags: [] },
+        baseVersionLabel: defaultBase,
+      },
+    ]))
+  }
+
+  const handleStartManualB = () => {
+    if (!contentA.title) return
+    setContentB({ ...contentA })
+    setTestResult(null)
+  }
+
+  const withKeywordTags = (content: ContentItem, keywords: string[]) => {
+    if (!keywords.length) return content
+    const existing = content.tags ?? []
+    const merged = [...existing]
+    for (const keyword of keywords) {
+      const clean = keyword.trim()
+      if (clean && !merged.includes(clean)) merged.push(clean)
+    }
+    return { ...content, tags: merged }
+  }
+
+  const handleGenerateBWithKeywords = async (keywords: string[]) => {
     if (!taskSpec || !contentA.title) return
     setIsGeneratingB(true)
     try {
@@ -206,18 +308,113 @@ function App() {
         task_spec: taskSpec,
         base_content: contentA,
         variant_type: 'alternative',
+        mcp_keywords: keywords,
       })
-      setContentB(variant)
+      setContentB(withKeywordTags(variant, keywords))
+      setTestResult(null)
     } catch (error) {
-      console.error('生成变体失败:', error)
+      console.error('Generate Version B with MCP failed:', error)
+    } finally {
+      setIsGeneratingB(false)
+    }
+  }
+  const handleStartManualExtra = (versionId: string, baseVersionLabel?: string) => {
+    const baseLabel = baseVersionLabel || 'Version A'
+    const baseContent = getVersionContentByLabel(baseLabel)
+    if (!baseContent) return
+
+    setExtraVersions(prev => prev.map(v =>
+      v.id === versionId
+        ? { ...v, content: { ...baseContent }, baseVersionLabel: baseLabel }
+        : v
+    ))
+    setTestResult(null)
+  }
+
+  const handleGenerateExtraWithKeywords = async (versionId: string, keywords: string[], baseVersionLabel?: string) => {
+    if (!taskSpec) return
+    const baseLabel = baseVersionLabel || 'Version A'
+    const baseContent = getVersionContentByLabel(baseLabel)
+    if (!baseContent || !baseContent.title) return
+
+    setIsGeneratingB(true)
+    try {
+      const variant = await generateVariant({
+        task_spec: taskSpec,
+        base_content: baseContent,
+        variant_type: 'alternative',
+        mcp_keywords: keywords,
+      })
+
+      setExtraVersions(prev => prev.map(v =>
+        v.id === versionId
+          ? { ...v, content: withKeywordTags(variant, keywords), baseVersionLabel: baseLabel }
+          : v
+      ))
+      setTestResult(null)
+    } catch (error) {
+      console.error('Generate extra version failed:', error)
     } finally {
       setIsGeneratingB(false)
     }
   }
 
-  // 运行测试
+  const mcpKeywordPlaceholder = (() => {
+    const broadKeywords = new Set([
+      '\u62a4\u80a4', '\u7f8e\u98df', '\u65c5\u6e38', '\u526f\u4e1a', '\u5065\u8eab', '\u7a7f\u642d', '\u5b66\u4e60', '\u804c\u573a', '\u7406\u8d22', '\u60c5\u611f', '\u6444\u5f71',
+    ])
+
+    const seeds: string[] = []
+    if (taskSpec?.topic?.trim()) seeds.push(taskSpec.topic.trim())
+    if (contentA.tags?.length) seeds.push(...contentA.tags.slice(0, 3))
+    if (taskSpec?.audience?.trim()) {
+      const firstAudience = taskSpec.audience.split(/[\/,\s]+/)[0]?.trim()
+      if (firstAudience) seeds.push(firstAudience)
+    }
+
+    const refined = Array.from(
+      new Set(
+        seeds
+          .map(s => s.replace(/^#/, '').trim())
+          .filter(Boolean),
+      ),
+    )
+
+    const specific = refined.filter(s => s.length >= 3 && s.length <= 10 && !broadKeywords.has(s))
+
+    let sample = specific[0] || ''
+    if (!sample && refined.length >= 2) sample = `${refined[0]}${refined[1]}`
+    if (!sample && refined.length >= 1) sample = refined[0]
+
+    if (sample.length > 12) sample = sample.slice(0, 12)
+
+    const placeholder = sample ? `\u5982\uff1a${sample}` : ''
+    return Array.from(placeholder).slice(0, 15).join('')
+  })()
+
+  const testVersionOptions = [
+    { label: 'Version A', content: contentA },
+    { label: 'Version B', content: contentB },
+    ...extraVersions.map(v => ({ label: v.label, content: v.content })),
+  ]
+  const hasContent = (item: ContentItem) => Boolean(item.title || item.body)
+  const selectedVersionItems = testVersionOptions.filter(option => selectedTestVersions.includes(option.label))
+  const canRunTest = selectedTestVersions.length >= 2 && selectedVersionItems.every(option => hasContent(option.content))
+
+  const toggleTestVersion = (label: string) => {
+    setSelectedTestVersions(prev => (
+      prev.includes(label) ? prev.filter(v => v !== label) : [...prev, label]
+    ))
+  }
+
   const handleRunTest = async () => {
-    if (!taskSpec || !contentA.title || !contentB.title) return
+    if (!taskSpec) return
+    if (selectedTestVersions.length < 2) {
+      alert('请至少选择两个版本进行对比测试')
+      return
+    }
+    const selectedVersions = selectedVersionItems
+    if (selectedVersions.some(option => !option.content?.title)) return
     setIsRunningTest(true)
     setSimulationProgress(0)
     setTestResult(null)
@@ -232,8 +429,7 @@ function App() {
 
       const payload = {
         task_spec: taskSpecForTest,
-        content_a: contentA,
-        content_b: contentB,
+        versions: selectedVersions.map(option => ({ label: option.label, content: option.content })),
         max_users: 20,
         audience_tags: audienceOverrides,
       }
@@ -279,55 +475,56 @@ function App() {
   const removeCustomAudienceTag = (tag: string) => {
     setCustomAudienceTags(prev => prev.filter(t => t !== tag))
   }
-
-  // 发布
-  const handlePublish = async (version: 'A' | 'B') => {
-    const content = version === 'A' ? contentA : contentB
+  const handlePublishContent = async (content: ContentItem, versionLabel: string) => {
     if (!content.title || !content.body) {
-      alert('请先填写标题和正文')
+      alert('请完善版本标题和正文')
       return
     }
     if (!content.cover_image) {
-      alert('请先添加封面图片')
+      alert('\u8bf7\u5148\u6dfb\u52a0\u5c01\u9762\u56fe\u7247')
       return
     }
-    if (!confirm(`确定要发布版本 ${version} 吗？`)) return
-    
+    if (!confirm(`\u786e\u5b9a\u8981\u53d1\u5e03 ${versionLabel} \u5417\uff1f`)) return
+
     setIsPublishing(true)
     try {
       const result = await publishContent(content)
       if (result.success) {
-        alert('🎉 发布成功！')
+        alert('\u53d1\u5e03\u6210\u529f')
       } else {
-        alert(`发布失败: ${result.message}`)
+        alert(`\u53d1\u5e03\u5931\u8d25: ${result.message}`)
       }
     } catch (error: any) {
-      alert(`发布失败: ${error.message}`)
+      alert(`\u53d1\u5e03\u5931\u8d25: ${error.message}`)
     } finally {
       setIsPublishing(false)
     }
   }
 
+  const handlePublish = async (version: 'A' | 'B') => {
+    const content = version === 'A' ? contentA : contentB
+    await handlePublishContent(content, `Version ${version}`)
+  }
+
   const handleReset = () => {
-    setMessages([{ role: 'assistant', content: '👋 你好！我是 NoteTrial 助手。\n\n告诉我想测试什么内容，例如：\n• 程序员副业指南\n• 美食探店文案\n• 护肤品种草\n\n你可以上传产品资料，我会帮你生成更准确的内容。' }])
+    setMessages([{ role: 'assistant', content: '👋 你好！我是 NoteTrial 助手。\n\n告诉我想测试什么内容，例如：\n“程序员副业指南”\n“美食探店文案”\n“护肤品种草”\n\n你可以上传产品资料，我会帮你生成更准确的内容。' }])
     setContentA({ title: '', body: '', tags: [] })
     setContentB({ title: '', body: '', tags: [] })
     setTaskSpec(null)
     setTestResult(null)
+    setExtraVersions([])
+    setSelectedTestVersions(['Version A', 'Version B'])
   }
 
-  // 处理模式选择
   const handleModeSelect = (mode: 'interactive' | 'auto') => {
     setAppMode(mode)
   }
 
-  // 返回欢迎页
   const handleBackToWelcome = () => {
     setAppMode('welcome')
     handleReset()
   }
 
-  // 根据模式渲染不同页面
   if (appMode === 'welcome') {
     return <WelcomePage onSelectMode={handleModeSelect} />
   }
@@ -336,10 +533,8 @@ function App() {
     return <AutoModePage onBack={handleBackToWelcome} />
   }
 
-  // 人机交互模式 - 原有界面
   return (
     <div className="h-screen flex flex-col bg-slate-50 font-sans text-slate-900">
-      {/* 顶栏 - 专业风格 */}
       <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between flex-shrink-0 shadow-sm z-10 w-full">
         <div className="flex items-center gap-3">
           <button 
@@ -371,10 +566,8 @@ function App() {
         </div>
       </header>
 
-      {/* 主内容 - 三栏布局 (Chat | Editor | Test) */}
       <main className="flex-1 flex min-h-0 overflow-hidden">
         
-        {/* 左栏：AI 助手 (Chat) - 可拖拽 */}
         <div 
           className="border-r border-slate-200 bg-white flex flex-col" 
           style={{ width: leftWidth, flexShrink: 0, flexGrow: 0 }}
@@ -386,14 +579,11 @@ function App() {
           
           <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/30 scrollbar-thin scrollbar-thumb-slate-200">
             {messages.map((msg, idx) => {
-              // 解析消息，检查是否包含文件附件 - 使用更宽松的匹配
               const fileMatch = msg.content.match(/^\[上传文件: (.+?)\]\n\n/)
               const hasFile = msg.role === 'user' && fileMatch
               const fileName = hasFile ? fileMatch[1] : null
-              // 提取用户实际输入的文字（文件内容之后的部分）
               let userText = msg.content
               if (hasFile) {
-                // 找到文件内容后的用户文字（最后一个\n\n之后的内容）
                 const parts = msg.content.split('\n\n')
                 userText = parts.length > 2 ? parts[parts.length - 1] : ''
               }
@@ -401,7 +591,6 @@ function App() {
               return (
                 <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className="max-w-[90%] space-y-2">
-                    {/* 文件附件卡片 - 独立显示在消息上方 */}
                     {hasFile && fileName && (
                       <div className="flex justify-end">
                         <div className="flex items-center gap-3 px-4 py-3 bg-white rounded-xl border border-slate-200 shadow-sm">
@@ -415,7 +604,6 @@ function App() {
                         </div>
                       </div>
                     )}
-                    {/* 消息内容 */}
                     {userText.trim() && (
                       <div 
                         className={`rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
@@ -482,7 +670,6 @@ function App() {
                   placeholder="输入消息，回车发送..."
                   className="w-full pl-4 pr-12 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442] focus:bg-white transition-all"
                 />
-                {/* 发送按钮修正：绝对定位 + 垂直居中 */}
                 <button
                   onClick={handleSend}
                   disabled={(!input.trim() && !uploadedFile) || isLoading}
@@ -495,10 +682,8 @@ function App() {
           </div>
         </div>
         
-        {/* 左侧分隔条 */}
         <Resizer onDrag={handleLeftResize} side="left" />
 
-        {/* 中栏：Split Editor (A/B) - 专业编辑器风格 */}
         <div className="flex-1 flex flex-col min-w-0 bg-slate-100/50">
           <div className="h-14 px-6 border-b border-slate-200 bg-white flex items-center justify-between shadow-sm flex-shrink-0">
             <div className="flex items-center gap-2">
@@ -517,19 +702,19 @@ function App() {
             <div className="flex items-center gap-3">
               {contentA.title && (
                 <button
-                  onClick={handleGenerateB}
+                  onClick={handleAddVersion}
                   disabled={isGeneratingB}
                   className="flex items-center gap-2 px-4 py-2 text-xs font-semibold bg-white text-[#ff2442] border border-red-200 rounded-lg hover:bg-red-50 hover:border-red-300 transition-all disabled:opacity-50 shadow-sm"
                 >
                   {isGeneratingB ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                  {contentB.title ? '重新生成 B' : '生成版本 B'}
+                  {'\u65b0\u589e\u7248\u672c'}
                 </button>
               )}
             </div>
           </div>
           
-          <div className="flex-1 overflow-hidden p-6">
-            <div className="h-full grid grid-cols-2 gap-6 max-w-7xl mx-auto">
+          <div className="flex-1 overflow-y-auto p-6">
+            <div className="grid gap-6 max-w-7xl mx-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
               <EditorCard
                 version="A"
                 label="Version A"
@@ -537,7 +722,8 @@ function App() {
                 onChange={setContentA}
                 onPublish={() => handlePublish('A')}
                 isPublishing={isPublishing}
-                colorTheme="blue"
+                onDelete={canDeleteAny ? handleDeleteVersionA : undefined}
+                colorTheme="red"
               />
               <EditorCard
                 version="B"
@@ -547,18 +733,38 @@ function App() {
                 onPublish={() => handlePublish('B')}
                 isPublishing={isPublishing}
                 isEmpty={!contentB.title}
-                onGenerate={handleGenerateB}
+                onGenerate={handleGenerateBWithKeywords}
                 isGenerating={isGeneratingB}
+                onStartManual={handleStartManualB}
+                mcpKeywordPlaceholder={mcpKeywordPlaceholder}
+                onDelete={canDeleteAny ? handleDeleteVersionB : undefined}
                 colorTheme="red"
               />
+              {extraVersions.map((versionItem) => (
+                <EditorCard
+                  key={versionItem.id}
+                  version={versionItem.label}
+                  label={versionItem.label}
+                  content={versionItem.content}
+                  onChange={(next) => setExtraVersions(prev => prev.map(v => v.id === versionItem.id ? { ...v, content: next } : v))}
+                  onPublish={() => handlePublishContent(versionItem.content, versionItem.label)}
+                  isPublishing={isPublishing}
+                  isEmpty={!versionItem.content.title}
+                  onGenerate={(keywords, baseVersionLabel) => handleGenerateExtraWithKeywords(versionItem.id, keywords, baseVersionLabel)}
+                  onStartManual={(baseVersionLabel) => handleStartManualExtra(versionItem.id, baseVersionLabel)}
+                  mcpKeywordPlaceholder={mcpKeywordPlaceholder}
+                  baseVersionOptions={getBaseOptionsForExtra(versionItem.id)}
+                  defaultBaseVersion={versionItem.baseVersionLabel}
+                  onDelete={canDeleteAny ? () => handleDeleteExtra(versionItem.id) : undefined}
+                  colorTheme="red"
+                />
+              ))}
             </div>
           </div>
         </div>
         
-        {/* 右侧分隔条 */}
         <Resizer onDrag={handleRightResize} side="right" />
 
-        {/* 右栏：测试面板 - 可拖拽 */}
         <div 
           className="border-l border-slate-200 bg-white flex flex-col" 
           style={{ width: rightWidth, flexShrink: 0, flexGrow: 0 }}
@@ -605,7 +811,7 @@ function App() {
                           addCustomAudienceTag()
                         }
                       }}
-                      placeholder="例如：一线城市25-30岁职业女性"
+                      placeholder="例如：一线城市 25-30 岁职业女性"
                       className="flex-1 px-3 py-2 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442]"
                     />
                     <button
@@ -636,13 +842,36 @@ function App() {
                     </div>
                   )}
                 </div>
+                <div className="mb-4">
+                  <p className="text-xs text-slate-500 mb-2">{'\u6d4b\u8bd5\u7248\u672c\uff08\u53ef\u591a\u9009\uff0c\u81f3\u5c11\u9009 2 \u4e2a\uff09'}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {testVersionOptions.map(option => {
+                      const disabled = !hasContent(option.content)
+                      const active = selectedTestVersions.includes(option.label)
+                      return (
+                        <button
+                          key={option.label}
+                          type="button"
+                          onClick={() => !disabled && toggleTestVersion(option.label)}
+                          className={`px-2.5 py-1 text-xs rounded-full border transition-all ${
+                            active
+                              ? 'bg-red-50 border-red-300 text-[#ff2442]'
+                              : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+                          } ${disabled ? 'opacity-40 cursor-not-allowed hover:border-slate-200' : ''}`}
+                        >
+                          {option.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
                 <button
                   onClick={handleRunTest}
-                  disabled={!contentA.title || !contentB.title || isRunningTest}
+                  disabled={!canRunTest || isRunningTest}
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#ff2442] text-white text-sm font-medium rounded-lg hover:bg-[#e61f3d] shadow-sm shadow-red-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isRunningTest ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
-                  {isRunningTest ? `模拟测试中 ${simulationProgress}%` : '运行 A/B 测试'}
+                  {isRunningTest ? `模拟测试中 ${simulationProgress}%` : '运行对比测试'}
                 </button>
                 {isRunningTest && (
                   <div className="mt-2 h-2 w-full bg-red-100 rounded-full overflow-hidden">
@@ -674,34 +903,44 @@ function App() {
 }
 
 // ----------------------------------------------------------------------------
-// 专业编辑器组件 (EditorCard)
 // ----------------------------------------------------------------------------
 
 function EditorCard({ 
-  label, content, onChange, onPublish, isPublishing, isEmpty, onGenerate, isGenerating, colorTheme
+  label, content, onChange, onPublish, isPublishing, isEmpty, onGenerate, onStartManual, isGenerating, colorTheme, mcpKeywordPlaceholder, baseVersionOptions, defaultBaseVersion, onDelete
 }: { 
-  version: 'A' | 'B'
+  version: string
   label: string
   content: ContentItem
   onChange: (c: ContentItem) => void
   onPublish: () => void
   isPublishing: boolean
   isEmpty?: boolean
-  onGenerate?: () => void
+  onGenerate?: (keywords: string[], baseVersionLabel?: string) => void
+  onStartManual?: (baseVersionLabel?: string) => void
   isGenerating?: boolean
   colorTheme: 'blue' | 'red'
+  mcpKeywordPlaceholder?: string
+  baseVersionOptions?: string[]
+  defaultBaseVersion?: string
+  onDelete?: () => void
 }) {
   const [activeTab, setActiveTab] = useState<'upload' | 'url' | 'search'>('upload')
   const [showImgMgr, setShowImgMgr] = useState(false)
+  const [mcpKeywordInput, setMcpKeywordInput] = useState('')
+  const [selectedBaseVersion, setSelectedBaseVersion] = useState(defaultBaseVersion || baseVersionOptions?.[0] || 'Version A')
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (defaultBaseVersion && defaultBaseVersion !== selectedBaseVersion) {
+      setSelectedBaseVersion(defaultBaseVersion)
+    }
+  }, [defaultBaseVersion])
   
-  // 颜色配置 - 蓝色+小红书红配色
   const theme = {
     blue: { accent: 'text-blue-500', border: 'focus:border-blue-400', ring: 'focus:ring-blue-100', btn: 'bg-blue-500 hover:bg-blue-600', barColor: 'bg-blue-500', labelBg: 'bg-blue-500', labelText: 'text-white' },
     red: { accent: 'text-[#ff2442]', border: 'focus:border-[#ff2442]', ring: 'focus:ring-red-100', btn: 'bg-[#ff2442] hover:bg-[#e61f3d]', barColor: 'bg-[#ff2442]', labelBg: 'bg-[#ff2442]', labelText: 'text-white' }
   }[colorTheme]
 
-  // 图片处理 logic
   const handleLocalUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -713,7 +952,6 @@ function EditorCard({
     reader.readAsDataURL(file)
   }
 
-  // 标签处理 logic
   const handleTagKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       const val = e.currentTarget.value.trim()
@@ -723,35 +961,96 @@ function EditorCard({
       }
     }
   }
-
   if (isEmpty && onGenerate) {
+    const rawKeywordInput = mcpKeywordInput.trim()
+    const keywords = !rawKeywordInput
+      ? []
+      : /[,;\/\s]+/.test(rawKeywordInput)
+        ? rawKeywordInput
+            .split(/[,;\/\s]+/)
+            .map(k => k.trim())
+            .filter(Boolean)
+        : [rawKeywordInput]
+
     return (
-      <div className="h-full rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center gap-4 transition-all hover:border-slate-300 hover:bg-slate-100">
+      <div className="min-h-[640px] rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center gap-4 px-6 transition-all hover:border-slate-300 hover:bg-slate-100 relative">
+        {onDelete && (
+          <button
+            onClick={onDelete}
+            className="absolute right-3 top-3 z-10 w-7 h-7 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-200 shadow-sm flex items-center justify-center"
+            title="\u5220\u9664\u7248\u672c"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
         <div className="w-16 h-16 rounded-full bg-white shadow-sm flex items-center justify-center">
           <Wand2 className={`w-8 h-8 ${theme.accent}`} />
         </div>
         <div className="text-center">
-          <h3 className="font-semibold text-slate-700">版本 B 为空</h3>
-          <p className="text-sm text-slate-400 mt-1">点击生成即刻开始测试</p>
+          <h3 className="font-semibold text-slate-700">{`${label} \u4e3a\u7a7a`}</h3>
+          <p className="text-sm text-slate-500 mt-1">
+            {'\u53ef\u9009\u62e9\u624b\u52a8\u6539\u5199\uff0c\u6216\u8f93\u5165\u5173\u952e\u8bcd\u6821\u51c6\u751f\u6210\u3002'}
+          </p>
         </div>
-        <button
-          onClick={onGenerate}
-          disabled={isGenerating}
-          className={`px-6 py-2.5 rounded-lg text-white font-medium text-sm shadow-md shadow-slate-200 transition-all ${theme.btn} disabled:opacity-70`}
-        >
-          {isGenerating ? 'AI 正在生成内容...' : '一键生成版本 B'}
-        </button>
+
+        <div className="w-full max-w-md space-y-3">
+          {baseVersionOptions && baseVersionOptions.length > 0 && (
+            <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
+              <p className="text-xs text-slate-500">{'\u57fa\u4e8e\u7248\u672c'}</p>
+              <select
+                value={selectedBaseVersion}
+                onChange={(e) => setSelectedBaseVersion(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442] bg-white"
+              >
+                {baseVersionOptions.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <button
+            onClick={() => onStartManual?.(selectedBaseVersion)}
+            disabled={!onStartManual}
+            className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+          >
+            {'\u624b\u52a8\u6539\u5199'}
+          </button>
+
+          <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
+            <p className="text-xs text-slate-500">{'\u5173\u952e\u8bcd\uff1a'}</p>
+            <input
+              value={mcpKeywordInput}
+              onChange={(e) => setMcpKeywordInput(e.target.value)}
+              placeholder={mcpKeywordPlaceholder}
+              className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442]"
+            />
+            <button
+              onClick={() => onGenerate(keywords, selectedBaseVersion)}
+              disabled={isGenerating || keywords.length === 0}
+              className={`w-full px-4 py-2.5 rounded-lg text-white text-sm font-medium transition-all ${theme.btn} disabled:opacity-60`}
+            >
+              {isGenerating ? '\u6821\u51c6\u751f\u6210\u4e2d...' : `\u6821\u51c6\u751f\u6210${label}`}
+            </button>
+          </div>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="h-full bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden relative group">
-       {/* 顶部标签 */}
+    <div className="min-h-[640px] bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden relative group">
+      {onDelete && (
+        <button
+          onClick={onDelete}
+          className="absolute right-3 top-3 z-10 w-7 h-7 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-200 shadow-sm flex items-center justify-center"
+          title="\u5220\u9664\u7248\u672c"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
       <div className={`h-1 absolute top-0 left-0 right-0 ${theme.barColor}`} />
       
       <div className="flex-1 flex flex-col overflow-y-auto">
-        {/* 图片区域 - 小红书风格 3:4 比例 */}
         <div className="relative w-full bg-slate-100 border-b border-slate-100 group-image flex-shrink-0" style={{ aspectRatio: '3/4', maxHeight: '280px' }}>
           {content.cover_image ? (
             <>
@@ -771,11 +1070,10 @@ function EditorCard({
                <div className="w-12 h-12 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-400">
                  <ImageIcon className="w-6 h-6" />
                </div>
-               <span className="text-sm font-medium text-slate-500">上传封面图</span>
+              <span className="text-sm font-medium text-slate-500">上传封面图</span>
              </div>
           )}
 
-          {/* 图片管理器浮窗 */}
           {showImgMgr && (
             <div className="absolute inset-0 bg-white/95 backdrop-blur-md z-20 flex flex-col p-4 animate-in fade-in zoom-in duration-200">
               <div className="flex justify-between items-center mb-4">
@@ -832,29 +1130,25 @@ function EditorCard({
           )}
         </div>
 
-        {/* 内容编辑区域 */}
         <div className="p-5 flex-1 flex flex-col gap-5">
-           {/* 标题 */}
            <div className="space-y-1">
              <input
                type="text"
                value={content.title}
                onChange={(e) => onChange({...content, title: e.target.value})}
-               placeholder="输入一个吸引人的标题..."
+              placeholder="输入一个吸引人的标题..."
                className={`w-full text-lg font-bold text-slate-800 placeholder:text-slate-300 border-none p-0 focus:ring-0 bg-transparent`}
              />
              <div className="h-0.5 w-10 bg-slate-200 rounded-full" />
            </div>
 
-           {/* 正文 */}
            <textarea
              value={content.body}
              onChange={(e) => onChange({...content, body: e.target.value})}
-             placeholder="在这里输入笔记正文..."
+            placeholder="在这里输入笔记正文..."
              className="w-full flex-1 resize-none text-sm leading-relaxed text-slate-600 placeholder:text-slate-300 border-none p-0 focus:ring-0 bg-transparent"
            />
 
-           {/* 标签 */}
            <div className="space-y-2 pt-4 border-t border-slate-100">
              <div className="flex flex-wrap gap-2">
                {content.tags.map(tag => (
@@ -877,7 +1171,6 @@ function EditorCard({
         </div>
       </div>
       
-      {/* 底部 Action Bar */}
       <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/50 flex justify-between items-center">
         <span className={`text-sm font-bold ${theme.accent}`}>{label}</span>
         <div className="flex gap-3">
@@ -941,97 +1234,93 @@ function ImageSearchPanel({ onSelect, query }: { onSelect: (url: string) => void
   )
 }
 
-function TestResultPanel({ result }: { result: CrowdTestResult }) {
+function TestResultPanel({ result }: { result: MultiCrowdTestResult }) {
+  const winnerLabel = result.overall_confidence.winner && result.overall_confidence.winner !== '-' ? result.overall_confidence.winner : '\u2014'
+  const totalUsers = Math.max(result.persona_results.length, 1)
+  const scoreItems = result.version_scores
+
   return (
     <div className="space-y-6">
-      {/* 胜出者卡片 */}
       <div className="bg-gradient-to-br from-[#ff2442] to-[#e61f3d] rounded-xl p-4 text-white shadow-md shadow-red-200">
         <div className="flex items-center gap-2 mb-2 opacity-90">
-             <Sparkles className="w-4 h-4 text-white" />
-             <span className="text-xs font-bold uppercase tracking-wide">获胜版本</span>
+          <Sparkles className="w-4 h-4 text-white" />
+          <span className="text-xs font-bold uppercase tracking-wide">{'\u83b7\u80dc\u7248\u672c'}</span>
         </div>
-        <div className="text-2xl font-bold mb-1">
-          Version {result.overall_confidence.winner}
-        </div>
+        <div className="text-2xl font-bold mb-1">{winnerLabel}</div>
         <div className="text-xs opacity-80 leading-relaxed">
-          综合表现优于对照组 {result.overall_confidence.confidence.toFixed(0)}%
+          {'\u7efc\u5408\u8868\u73b0\u4f18\u4e8e\u5bf9\u7167\u7ec4 '}
+          {result.overall_confidence.confidence.toFixed(0)}%
         </div>
       </div>
 
-       {/* Detailed Stats */}
-        <div className="space-y-3">
-          <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
-             <BarChart3 className="w-3 h-3" /> 数据对比
-          </h4>
-         <StatBar label="点赞数 (Likes)" scoreA={result.version_a_score.like_count} scoreB={result.version_b_score.like_count} totalUsers={result.persona_results.length} />
-         <StatBar label="收藏数 (Saves)" scoreA={result.version_a_score.save_count} scoreB={result.version_b_score.save_count} totalUsers={result.persona_results.length} />
-          <StatBar label="评论数 (Comments)" scoreA={result.version_a_score.comment_count} scoreB={result.version_b_score.comment_count} totalUsers={result.persona_results.length} />
-          <StatBar label="分享数 (Shares)" scoreA={result.version_a_score.share_count} scoreB={result.version_b_score.share_count} totalUsers={result.persona_results.length} />
-          <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-xs text-slate-600 flex items-center justify-between">
-            <span>总体置信度 (Overall)</span>
-            <span className="font-semibold text-slate-700">
-              Version {result.overall_confidence.winner} · {result.overall_confidence.confidence.toFixed(0)}%
-            </span>
-          </div>
+      <div className="space-y-3">
+        <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
+          <BarChart3 className="w-3 h-3" /> {'\u6570\u636e\u5bf9\u6bd4'}
+        </h4>
+        <StatBar label={'\u70b9\u8d5e\u6570 (Likes)'} totalUsers={totalUsers} items={scoreItems.map(v => ({ label: v.label, value: v.score.like_count }))} />
+        <StatBar label={'\u6536\u85cf\u6570 (Saves)'} totalUsers={totalUsers} items={scoreItems.map(v => ({ label: v.label, value: v.score.save_count }))} />
+        <StatBar label={'\u8bc4\u8bba\u6570 (Comments)'} totalUsers={totalUsers} items={scoreItems.map(v => ({ label: v.label, value: v.score.comment_count }))} />
+        <StatBar label={'\u5206\u4eab\u6570 (Shares)'} totalUsers={totalUsers} items={scoreItems.map(v => ({ label: v.label, value: v.score.share_count }))} />
+        <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-xs text-slate-600 flex items-center justify-between">
+          <span>{'\u603b\u4f53\u7f6e\u4fe1\u5ea6 (Overall)'}</span>
+          <span className="font-semibold text-slate-700">
+            {winnerLabel} - {result.overall_confidence.confidence.toFixed(0)}%
+          </span>
         </div>
-       
-       {/* 模拟用户反馈 */}
-       <div className="space-y-3">
-          <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
-             <UserCircle2 className="w-3 h-3" /> 模拟用户声音
-          </h4>
-          <div className="space-y-3">
-             {result.suggestions.slice(0,2).map((s,i) => (
-               <div key={i} className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs">
-                 <div className="flex items-center gap-2 mb-1">
-                    <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[10px] text-slate-500 font-bold">U{i+1}</div>
-                    <span className="text-slate-400 scale-75">just now</span>
-                 </div>
-                 <p className="text-slate-600 leading-normal">{s}</p>
-               </div>
-             ))}
-          </div>
-       </div>
+      </div>
 
-       <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
-          <h4 className="text-xs font-semibold text-amber-700 mb-1">改进建议</h4>
-          <ul className="list-disc pl-4 space-y-1">
-             {result.diagnosis.slice(0,3).map((d, i) => (
-                <li key={i} className="text-xs text-amber-700 leading-normal">{d}</li>
-             ))}
-          </ul>
-       </div>
+      <div className="space-y-3">
+        <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
+          <UserCircle2 className="w-3 h-3" /> {'\u6a21\u62df\u7528\u6237\u58f0\u97f3'}
+        </h4>
+        <div className="space-y-3">
+          {result.suggestions.slice(0, 2).map((s, i) => (
+            <div key={i} className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[10px] text-slate-500 font-bold">U{i + 1}</div>
+                <span className="text-slate-400 scale-75">just now</span>
+              </div>
+              <p className="text-slate-600 leading-normal">{s}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
+        <h4 className="text-xs font-semibold text-amber-700 mb-1">{'\u6539\u8fdb\u5efa\u8bae'}</h4>
+        <ul className="list-disc pl-4 space-y-1">
+          {result.diagnosis.slice(0, 3).map((d, i) => (
+            <li key={i} className="text-xs text-amber-700 leading-normal">{d}</li>
+          ))}
+        </ul>
+      </div>
     </div>
   )
 }
 
-function StatBar({ label, scoreA, scoreB, totalUsers }: { label: string, scoreA: number, scoreB: number, totalUsers: number }) {
+function StatBar({ label, totalUsers, items }: { label: string, totalUsers: number, items: Array<{ label: string, value: number }> }) {
   const base = Math.max(totalUsers, 1)
-  const pA = (scoreA / base) * 100
-  const pB = (scoreB / base) * 100
-  
+  const palette = ['#ff2442', '#ff7a90', '#ffa9b6', '#ffd1d8', '#ffe3e7', '#ffeef1']
+
   return (
     <div className="bg-white border focus-within:ring-1 border-slate-100 rounded-lg p-3 shadow-sm">
       <div className="flex justify-between mb-2">
         <span className="text-xs font-medium text-slate-500">{label}</span>
       </div>
       <div className="space-y-2">
-        {/* A Version */}
-        <div className="flex items-center gap-2">
-           <span className="text-[10px] w-3 text-blue-500 font-bold">A</span>
-           <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-             <div style={{ width: `${pA}%` }} className="h-full bg-blue-500 rounded-full" />
-           </div>
-           <span className="text-[10px] w-10 text-blue-600 text-right">{pA.toFixed(0)}%</span>
-        </div>
-        {/* B Version */}
-        <div className="flex items-center gap-2">
-           <span className="text-[10px] w-3 text-[#ff2442] font-bold">B</span>
-           <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-             <div style={{ width: `${pB}%` }} className="h-full bg-[#ff2442] rounded-full" />
-           </div>
-           <span className="text-[10px] w-10 text-[#ff2442] font-bold text-right">{pB.toFixed(0)}%</span>
-        </div>
+        {items.map((item, index) => {
+          const pct = (item.value / base) * 100
+          const color = palette[index % palette.length]
+          return (
+            <div key={item.label} className="flex items-center gap-2">
+              <span className="text-[10px] w-16 text-slate-600 font-semibold truncate">{item.label}</span>
+              <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div style={{ width: `${pct}%`, backgroundColor: color }} className="h-full rounded-full" />
+              </div>
+              <span className="text-[10px] w-10 text-slate-500 text-right">{pct.toFixed(0)}%</span>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

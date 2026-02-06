@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
-import type { TaskSpec, ContentItem, ChatMessage, CrowdTestResult } from '../types/api'
+import type { TaskSpec, ContentItem, ChatMessage, MultiCrowdTestResult } from '../types/api'
 
 // 历史记录类型
 export interface HistoryRecord {
@@ -8,7 +8,7 @@ export interface HistoryRecord {
   taskSpec: TaskSpec
   contentA: ContentItem
   contentB: ContentItem
-  testResult?: CrowdTestResult
+  testResult?: MultiCrowdTestResult
   publishedVersion?: 'A' | 'B'
 }
 
@@ -33,7 +33,7 @@ interface AppState {
   clearMessages: () => void
   
   // 历史记录操作
-  saveToHistory: (testResult?: CrowdTestResult, publishedVersion?: 'A' | 'B') => void
+  saveToHistory: (testResult?: MultiCrowdTestResult, publishedVersion?: 'A' | 'B') => void
   loadFromHistory: (record: HistoryRecord) => void
   deleteHistory: (id: string) => void
   clearHistory: () => void
@@ -170,7 +170,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMessagesState(defaultMessages)
   }
   
-  const saveToHistory = (testResult?: CrowdTestResult, publishedVersion?: 'A' | 'B') => {
+  const saveToHistory = (testResult?: MultiCrowdTestResult, publishedVersion?: 'A' | 'B') => {
     if (!taskSpec) return
     
     const record: HistoryRecord = {

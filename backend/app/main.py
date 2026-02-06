@@ -12,7 +12,8 @@ import uuid
 from .config import get_settings
 from .models import (
     ABTestRequest, CrowdTestResult, ChatRequest, ChatResponse,
-    GenerateVariantRequest, ContentItem, TaskSpec
+    GenerateVariantRequest, ContentItem, TaskSpec,
+    MultiTestRequest, MultiCrowdTestResult
 )
 from .services import (
     AudienceSimulator, XiaohongshuCalibrator, ContentGenerator, ImageGenerator,
@@ -147,12 +148,77 @@ async def chat(request: ChatRequest):
         request.messages,
         request.current_content
     )
+
+    # ???????? A ??? B ??????? MCP ????
+    if generated_content and task_spec and calibrator:
+        try:
+            reference_samples = await _fetch_reference_samples(
+                task_spec=task_spec,
+                base_content=generated_content,
+                log_prefix="[Chat/A]",
+            )
+            if reference_samples:
+                generated_content = await generator.generate_variant(
+                    task_spec=task_spec,
+                    base_content=generated_content,
+                    variant_type="alternative",
+                    reference_samples=reference_samples,
+                )
+        except Exception as e:
+            print(f"[Chat/A] MCP enhancement failed: {e}")
     
     return ChatResponse(
         message=message,
         task_spec=task_spec,
         generated_content=generated_content
     )
+
+
+
+async def _fetch_reference_samples(
+    task_spec: TaskSpec,
+    base_content: ContentItem,
+    log_prefix: str = "[MCP]",
+    extra_keywords: list[str] | None = None,
+    strict_extra_keywords: bool = False,
+) -> list[dict]:
+    """??????? MCP ?????topic/??/??/???????"""
+    if not calibrator:
+        return []
+
+    keyword_candidates = []
+    provided_keywords = [kw.strip() for kw in (extra_keywords or []) if kw and kw.strip()]
+    if provided_keywords:
+        keyword_candidates.extend(provided_keywords)
+
+    # When user explicitly gives keywords for Version B calibration, prioritize those keywords.
+    if not strict_extra_keywords:
+        if task_spec.topic and task_spec.topic.strip():
+            keyword_candidates.append(task_spec.topic.strip())
+        if base_content.title and base_content.title.strip():
+            keyword_candidates.append(base_content.title.strip()[:12])
+        if base_content.tags:
+            keyword_candidates.extend([t.strip() for t in base_content.tags if t and t.strip()])
+        if task_spec.audience and task_spec.audience.strip():
+            keyword_candidates.append(task_spec.audience.strip().split("/")[0].strip())
+
+    dedup_keywords = []
+    for kw in keyword_candidates:
+        if kw and kw not in dedup_keywords:
+            dedup_keywords.append(kw)
+
+    for keyword in dedup_keywords[:3]:
+        try:
+            print(f"{log_prefix} MCP search keyword: {keyword}")
+            reference_samples = await calibrator.search_topic_samples(keyword, limit=10)
+            if reference_samples:
+                print(f"{log_prefix} MCP hit {len(reference_samples)} samples by: {keyword}")
+                return reference_samples
+        except Exception as e:
+            print(f"{log_prefix} MCP search failed for {keyword}: {e}")
+
+    print(f"{log_prefix} MCP returned no samples")
+    return []
 
 
 @app.post("/api/generate-variant", response_model=ContentItem)
@@ -167,21 +233,15 @@ async def generate_variant(request: GenerateVariantRequest):
         raise HTTPException(status_code=500, detail="服务未初始化")
     
     # 尝试获取高赞内容作为参考
-    reference_samples = []
-    if calibrator and request.task_spec.topic:
-        try:
-            print(f"[Version B] 搜索高赞参考内容: {request.task_spec.topic}")
-            reference_samples = await calibrator.search_topic_samples(
-                request.task_spec.topic, 
-                limit=10
-            )
-            if reference_samples:
-                print(f"[Version B] 找到 {len(reference_samples)} 条高赞参考内容")
-            else:
-                print(f"[Version B] 未找到参考内容，使用纯AI生成")
-        except Exception as e:
-            print(f"[Version B] 获取参考内容失败: {e}，使用纯AI生成")
-    
+    # Try MCP-backed references for Version B (same direction as Version A pipeline)
+    reference_samples = await _fetch_reference_samples(
+        task_spec=request.task_spec,
+        base_content=request.base_content,
+        log_prefix="[Version B]",
+        extra_keywords=request.mcp_keywords,
+        strict_extra_keywords=bool(request.mcp_keywords),
+    )
+
     variant = await generator.generate_variant(
         request.task_spec,
         request.base_content,
@@ -205,7 +265,7 @@ async def _get_crowdtest_calibration_hints(task_spec: TaskSpec) -> list[str]:
 
 
 @app.post("/api/crowdtest/start")
-async def start_crowdtest(request: ABTestRequest):
+async def start_crowdtest(request: MultiTestRequest):
     """启动带进度的 CrowdTest 异步任务"""
     if not simulator or not calibrator:
         raise HTTPException(status_code=500, detail="服务未初始化")
@@ -229,10 +289,12 @@ async def start_crowdtest(request: ABTestRequest):
     async def worker():
         try:
             calibration_hints = await _get_crowdtest_calibration_hints(request.task_spec)
-            result = await simulator.simulate_ab_test(
+            if len(request.versions) < 2:
+                raise ValueError("At least two versions are required for comparison")
+            versions = [(v.label, v.content) for v in request.versions]
+            result = await simulator.simulate_multi_test(
                 task_spec=request.task_spec,
-                content_a=request.content_a,
-                content_b=request.content_b,
+                versions=versions,
                 max_users=request.max_users,
                 audience_tags=request.audience_tags,
                 calibration_hints=calibration_hints,
@@ -264,8 +326,8 @@ async def get_crowdtest_progress(job_id: str):
     }
 
 
-@app.post("/api/crowdtest", response_model=CrowdTestResult)
-async def run_crowdtest(request: ABTestRequest):
+@app.post("/api/crowdtest", response_model=MultiCrowdTestResult)
+async def run_crowdtest(request: MultiTestRequest):
     """
     执行 CrowdTest - 核心功能
     
@@ -283,13 +345,16 @@ async def run_crowdtest(request: ABTestRequest):
     calibration_hints = await _get_crowdtest_calibration_hints(request.task_spec)
     
     # 执行A/B测试模拟
-    result = await simulator.simulate_ab_test(
+    if len(request.versions) < 2:
+        raise HTTPException(status_code=400, detail="At least two versions are required for comparison")
+
+    versions = [(v.label, v.content) for v in request.versions]
+    result = await simulator.simulate_multi_test(
         task_spec=request.task_spec,
-        content_a=request.content_a,
-        content_b=request.content_b,
+        versions=versions,
         max_users=request.max_users,
         audience_tags=request.audience_tags,
-        calibration_hints=calibration_hints
+        calibration_hints=calibration_hints,
     )
     
     return result

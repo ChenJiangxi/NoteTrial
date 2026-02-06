@@ -15,7 +15,7 @@ import {
   Send,
   CheckCircle2,
 } from 'lucide-react'
-import type { ContentItem, TaskSpec, CrowdTestResult, StatisticalConfidence } from '../types/api'
+import type { ContentItem, TaskSpec, MultiCrowdTestResult, StatisticalConfidence } from '../types/api'
 import { runCrowdTest, publishContent } from '../services/api'
 
 interface CrowdTestPanelProps {
@@ -26,13 +26,17 @@ interface CrowdTestPanelProps {
 
 export default function CrowdTestPanel({ taskSpec, contentA, contentB }: CrowdTestPanelProps) {
   const [isRunning, setIsRunning] = useState(false)
-  const [result, setResult] = useState<CrowdTestResult | null>(null)
+  const [result, setResult] = useState<MultiCrowdTestResult | null>(null)
   const [maxUsers, setMaxUsers] = useState(20)
   const [showPersonas, setShowPersonas] = useState(false)
   const [isPublishing, setIsPublishing] = useState(false)
   const [publishSuccess, setPublishSuccess] = useState(false)
 
   const canRun = taskSpec && contentA.title && contentA.body && contentB.title && contentB.body
+  const emptyScore = { like_count: 0, save_count: 0, comment_count: 0, share_count: 0, total: 0 }
+  const scoreA = result?.version_scores.find(v => v.label === 'Version A')?.score ?? emptyScore
+  const scoreB = result?.version_scores.find(v => v.label === 'Version B')?.score ?? emptyScore
+  const winnerLabel = result?.overall_confidence.winner || '-'
 
   const handleRunTest = async () => {
     if (!canRun || !taskSpec) return
@@ -44,8 +48,10 @@ export default function CrowdTestPanel({ taskSpec, contentA, contentB }: CrowdTe
     try {
       const testResult = await runCrowdTest({
         task_spec: taskSpec,
-        content_a: contentA,
-        content_b: contentB,
+        versions: [
+          { label: 'Version A', content: contentA },
+          { label: 'Version B', content: contentB },
+        ],
         max_users: maxUsers,
       })
       setResult(testResult)
@@ -255,11 +261,11 @@ export default function CrowdTestPanel({ taskSpec, contentA, contentB }: CrowdTe
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-white/80 rounded-xl p-4 text-center border border-red-100">
                   <p className="text-xs text-gray-500 mb-1">版本 A 总互动</p>
-                  <p className="text-3xl font-bold text-red-500">{result.version_a_score.total}</p>
+                  <p className="text-3xl font-bold text-red-500">{scoreA.total}</p>
                 </div>
                 <div className="bg-white/80 rounded-xl p-4 text-center border border-blue-100">
                   <p className="text-xs text-gray-500 mb-1">版本 B 总互动</p>
-                  <p className="text-3xl font-bold text-blue-500">{result.version_b_score.total}</p>
+                  <p className="text-3xl font-bold text-blue-500">{scoreB.total}</p>
                 </div>
               </div>
             </div>
@@ -269,32 +275,32 @@ export default function CrowdTestPanel({ taskSpec, contentA, contentB }: CrowdTe
               <MetricCard
                 icon={ThumbsUp}
                 label="点赞"
-                scoreA={result.version_a_score.like_count}
-                scoreB={result.version_b_score.like_count}
+                scoreA={scoreA.like_count}
+                scoreB={scoreB.like_count}
                 confidence={result.like_confidence}
                 iconColor="text-pink-500"
               />
               <MetricCard
                 icon={Bookmark}
                 label="收藏"
-                scoreA={result.version_a_score.save_count}
-                scoreB={result.version_b_score.save_count}
+                scoreA={scoreA.save_count}
+                scoreB={scoreB.save_count}
                 confidence={result.save_confidence}
                 iconColor="text-yellow-500"
               />
               <MetricCard
                 icon={MessageCircle}
                 label="评论"
-                scoreA={result.version_a_score.comment_count}
-                scoreB={result.version_b_score.comment_count}
+                scoreA={scoreA.comment_count}
+                scoreB={scoreB.comment_count}
                 confidence={result.comment_confidence}
                 iconColor="text-blue-500"
               />
               <MetricCard
                 icon={Share2}
                 label="分享"
-                scoreA={result.version_a_score.share_count}
-                scoreB={result.version_b_score.share_count}
+                scoreA={scoreA.share_count}
+                scoreB={scoreB.share_count}
                 confidence={result.share_confidence}
                 iconColor="text-green-500"
               />

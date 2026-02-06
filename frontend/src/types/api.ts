@@ -45,6 +45,18 @@ export interface ABTestRequest {
   audience_tags?: string[]
 }
 
+export interface ContentVariant {
+  label: string
+  content: ContentItem
+}
+
+export interface MultiTestRequest {
+  task_spec: TaskSpec
+  versions: ContentVariant[]
+  max_users: number
+  audience_tags?: string[]
+}
+
 export interface PersonaSimulationResult {
   persona_id: string
   persona_description: string
@@ -82,10 +94,28 @@ export interface CrowdTestResult {
   persona_results: PersonaSimulationResult[]
 }
 
+export interface VersionScore {
+  label: string
+  score: EngagementScore
+}
+
+export interface MultiCrowdTestResult {
+  version_scores: VersionScore[]
+  like_confidence: StatisticalConfidence
+  save_confidence: StatisticalConfidence
+  comment_confidence: StatisticalConfidence
+  share_confidence: StatisticalConfidence
+  overall_confidence: StatisticalConfidence
+  diagnosis: string[]
+  suggestions: string[]
+  persona_results: PersonaSimulationResult[]
+}
+
 export interface GenerateVariantRequest {
   task_spec: TaskSpec
   base_content: ContentItem
   variant_type: 'alternative' | 'hook' | 'actionable'
+  mcp_keywords?: string[]
 }
 
 // 历史记录
@@ -95,6 +125,6 @@ export interface HistoryRecord {
   taskSpec: TaskSpec
   contentA: ContentItem
   contentB: ContentItem
-  testResult?: CrowdTestResult
+  testResult?: MultiCrowdTestResult
   publishedVersion?: 'A' | 'B'
 }

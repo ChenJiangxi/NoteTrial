@@ -62,7 +62,7 @@ export default function WelcomePage({ onSelectMode }: WelcomePageProps) {
                 <div className="text-sm font-medium text-blue-900 mb-2">📌 适用场景</div>
                 <ul className="text-sm text-blue-700 space-y-1">
                   <li>• 重要内容发布前想先测试效果</li>
-                  <li>• 有两个想法，不确定哪个更好</li>
+                  <li>• 有多个想法，不确定哪个更好</li>
                   <li>• 想了解目标用户会怎么看这篇内容</li>
                 </ul>
               </div>
@@ -75,7 +75,7 @@ export default function WelcomePage({ onSelectMode }: WelcomePageProps) {
                 </div>
                 <div className="flex items-center gap-3 text-gray-600">
                   <CheckCircle2 className="w-5 h-5 text-blue-500" />
-                  <span>自动生成 A/B 两版内容对比</span>
+                  <span>{'\u81ea\u52a8\u751f\u6210\u591a\u7248\u5185\u5bb9\u5bf9\u6bd4'}</span>
                 </div>
                 <div className="flex items-center gap-3 text-gray-600">
                   <CheckCircle2 className="w-5 h-5 text-blue-500" />

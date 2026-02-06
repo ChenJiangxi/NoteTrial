@@ -46,6 +46,20 @@ class ABTestRequest(BaseModel):
     audience_tags: Optional[List[str]] = Field(default=None, description="前端选择的测试人群标签")
 
 
+class ContentVariant(BaseModel):
+    """多版本内容定义"""
+    label: str = Field(..., description="版本标签，例: Version A")
+    content: ContentItem
+
+
+class MultiTestRequest(BaseModel):
+    """多版本对比测试请求"""
+    task_spec: TaskSpec
+    versions: List[ContentVariant]
+    max_users: int = Field(default=20, ge=5, le=100, description="模拟用户数量")
+    audience_tags: Optional[List[str]] = Field(default=None, description="前端选择的测试人群标签")
+
+
 class PersonaSimulationResult(BaseModel):
     """单个Persona的模拟结果"""
     persona_id: str
@@ -95,6 +109,25 @@ class CrowdTestResult(BaseModel):
     persona_results: List[PersonaSimulationResult]
 
 
+class VersionScore(BaseModel):
+    """多版本得分"""
+    label: str
+    score: EngagementScore
+
+
+class MultiCrowdTestResult(BaseModel):
+    """多版本模拟结果"""
+    version_scores: List[VersionScore]
+    like_confidence: StatisticalConfidence
+    save_confidence: StatisticalConfidence
+    comment_confidence: StatisticalConfidence
+    share_confidence: StatisticalConfidence
+    overall_confidence: StatisticalConfidence
+    diagnosis: List[str]
+    suggestions: List[str]
+    persona_results: List[PersonaSimulationResult]
+
+
 class CalibrationData(BaseModel):
     """小红书平台校准数据"""
     topic: str
@@ -130,6 +163,10 @@ class GenerateVariantRequest(BaseModel):
     task_spec: TaskSpec
     base_content: ContentItem
     variant_type: str = Field(default="alternative", description="变体类型：alternative/hook/actionable")
+    mcp_keywords: Optional[List[str]] = Field(
+        default=None,
+        description="Optional MCP search keywords for extra calibration",
+    )
 
 
 class SuggestionItem(BaseModel):

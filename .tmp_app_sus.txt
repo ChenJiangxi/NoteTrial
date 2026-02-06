@@ -1,0 +1,3 @@
+total_lines 1329
+suspect 1
+1267:             {winnerLabel} \xb7 {result.overall_confidence.confidence.toFixed(0)}%

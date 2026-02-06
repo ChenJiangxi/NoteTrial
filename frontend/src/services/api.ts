@@ -2,8 +2,8 @@ import axios from 'axios'
 import type {
   ChatRequest,
   ChatResponse,
-  ABTestRequest,
-  CrowdTestResult,
+  MultiTestRequest,
+  MultiCrowdTestResult,
   GenerateVariantRequest,
   ContentItem,
 } from '../types/api'
@@ -28,13 +28,13 @@ export async function generateVariant(request: GenerateVariantRequest): Promise<
 }
 
 // 执行 CrowdTest
-export async function runCrowdTest(request: ABTestRequest): Promise<CrowdTestResult> {
-  const response = await api.post<CrowdTestResult>('/crowdtest', request)
+export async function runCrowdTest(request: MultiTestRequest): Promise<MultiCrowdTestResult> {
+  const response = await api.post<MultiCrowdTestResult>('/crowdtest', request)
   return response.data
 }
 
 // 启动带进度的 CrowdTest 任务
-export async function startCrowdTest(request: ABTestRequest): Promise<{
+export async function startCrowdTest(request: MultiTestRequest): Promise<{
   job_id: string
   status: 'running'
 }> {
@@ -47,7 +47,7 @@ export async function getCrowdTestProgress(jobId: string): Promise<{
   job_id: string
   status: 'running' | 'completed' | 'failed'
   progress: number
-  result?: CrowdTestResult
+  result?: MultiCrowdTestResult
   error?: string
 }> {
   const response = await api.get(`/crowdtest/progress/${jobId}`)

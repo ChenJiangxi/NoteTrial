@@ -12,7 +12,8 @@ from statsmodels.stats.proportion import proportions_ztest
 
 from ..models import (
     TaskSpec, ContentItem, PersonaSimulationResult,
-    EngagementScore, StatisticalConfidence, CrowdTestResult, OptimizationGoal
+    EngagementScore, StatisticalConfidence, CrowdTestResult, OptimizationGoal,
+    MultiCrowdTestResult, VersionScore
 )
 from ..config import get_settings
 
@@ -230,6 +231,119 @@ class AudienceSimulator:
             suggestions=suggestions,
             persona_results=combined_results
         )
+
+    async def simulate_multi_test(
+        self,
+        task_spec: TaskSpec,
+        versions: List[Tuple[str, ContentItem]],
+        max_users: int = 20,
+        audience_tags: List[str] = None,
+        calibration_hints: List[str] = None,
+        on_progress: callable = None
+    ) -> MultiCrowdTestResult:
+        """Multi-version simulation for direct comparison."""
+        if not versions or len(versions) < 2:
+            return MultiCrowdTestResult(
+                version_scores=[],
+                like_confidence=StatisticalConfidence(winner="-", confidence=0.0),
+                save_confidence=StatisticalConfidence(winner="-", confidence=0.0),
+                comment_confidence=StatisticalConfidence(winner="-", confidence=0.0),
+                share_confidence=StatisticalConfidence(winner="-", confidence=0.0),
+                overall_confidence=StatisticalConfidence(winner="-", confidence=0.0),
+                diagnosis=[],
+                suggestions=[],
+                persona_results=[],
+            )
+
+        tag_list = [t.strip() for t in (audience_tags or []) if t and t.strip()]
+        if tag_list:
+            personas = self._generate_personas(task_spec, len(tag_list), tag_list)
+            runs_per_persona = 3
+        else:
+            personas = self._generate_personas(task_spec, min(max_users, 5))
+            runs_per_persona = max(1, max_users // len(personas))
+
+        version_map = {label: content for label, content in versions}
+        version_labels = [label for label, _ in versions]
+        results_by_label: Dict[str, List[PersonaSimulationResult]] = {label: [] for label in version_labels}
+        combined_results: List[PersonaSimulationResult] = []
+
+        total_runs = len(personas) * runs_per_persona
+        completed = 0
+
+        for persona in personas:
+            for _ in range(runs_per_persona):
+                results = await asyncio.gather(
+                    *[
+                        self._simulate_single_user(persona, version_map[label], task_spec, calibration_hints)
+                        for label in version_labels
+                    ]
+                )
+                for label, result in zip(version_labels, results):
+                    results_by_label[label].append(result)
+
+                best_index = max(
+                    range(len(results)),
+                    key=lambda i: (results[i].like + results[i].save + results[i].comment + results[i].share)
+                )
+                best_label = version_labels[best_index]
+                best_result = results[best_index]
+                best_result.version_preference = best_label
+                combined_results.append(best_result)
+
+                completed += 1
+                if on_progress:
+                    await on_progress(completed, total_runs)
+
+        version_scores = [
+            VersionScore(label=label, score=self._calculate_score(results_by_label[label]))
+            for label in version_labels
+        ]
+        version_scores_sorted = sorted(version_scores, key=lambda v: v.score.total, reverse=True)
+
+        users = len(next(iter(results_by_label.values()))) if results_by_label else 0
+        like_conf = self._calc_multi_confidence(users, {v.label: v.score.like_count for v in version_scores})
+        save_conf = self._calc_multi_confidence(users, {v.label: v.score.save_count for v in version_scores})
+        comment_conf = self._calc_multi_confidence(users, {v.label: v.score.comment_count for v in version_scores})
+        share_conf = self._calc_multi_confidence(users, {v.label: v.score.share_count for v in version_scores})
+        overall_conf = self._calc_multi_confidence(users, {v.label: v.score.total for v in version_scores})
+
+        diagnosis: List[str] = []
+        suggestions: List[str] = []
+        if len(version_scores_sorted) >= 2:
+            top = version_scores_sorted[0]
+            second = version_scores_sorted[1]
+            top_content = version_map[top.label]
+            second_content = version_map[second.label]
+            diagnosis = await self._generate_diagnosis(
+                task_spec,
+                top_content,
+                second_content,
+                top.score,
+                second.score,
+                results_by_label[top.label],
+                results_by_label[second.label],
+            )
+            suggestions = await self._generate_suggestions(
+                task_spec,
+                top_content,
+                second_content,
+                top.score,
+                second.score,
+                calibration_hints,
+            )
+
+        return MultiCrowdTestResult(
+            version_scores=version_scores_sorted,
+            like_confidence=like_conf,
+            save_confidence=save_conf,
+            comment_confidence=comment_conf,
+            share_confidence=share_conf,
+            overall_confidence=overall_conf,
+            diagnosis=diagnosis,
+            suggestions=suggestions,
+            persona_results=combined_results,
+        )
     
     def _calculate_score(self, results: List[PersonaSimulationResult]) -> EngagementScore:
         """计算互动分数"""
@@ -290,6 +404,24 @@ class AudienceSimulator:
             else:
                 return StatisticalConfidence(winner="B", confidence=(vote_b / total_votes) * 100)
     
+    def _calc_multi_confidence(self, users: int, counts: Dict[str, int]) -> StatisticalConfidence:
+        """Compute confidence for multi-version by comparing top-2."""
+        if not counts:
+            return StatisticalConfidence(winner="-", confidence=0.0)
+
+        sorted_items = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+        top_label, top_count = sorted_items[0]
+        if len(sorted_items) == 1:
+            return StatisticalConfidence(winner=top_label, confidence=100.0)
+
+        second_label, second_count = sorted_items[1]
+        if top_count == second_count:
+            return StatisticalConfidence(winner="-", confidence=50.0)
+
+        base = self._calc_confidence(users, top_count, second_count)
+        winner = top_label if base.winner == "A" else second_label
+        return StatisticalConfidence(winner=winner, confidence=base.confidence)
+
     async def _generate_diagnosis(
         self,
         task_spec: TaskSpec,
