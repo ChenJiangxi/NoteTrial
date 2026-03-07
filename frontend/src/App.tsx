@@ -1,12 +1,13 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { 
   Zap, Send, Loader2, Sparkles, Play, Image as ImageIcon, Wand2,
-  Share2, Paperclip, X, FileText, Upload, Plus, Search,
-  Layout, Smartphone, ChevronRight, UserCircle2, BarChart3, GripVertical, Home
+  Paperclip, X, FileText, Upload, Plus,
+  Layout, Smartphone, ChevronRight, UserCircle2, BarChart3, GripVertical, Home,
+  ChevronLeft, ListPlus
 } from 'lucide-react'
 import { useApp } from './contexts/AppContext'
-import { healthCheck, sendChatMessage, generateVariant, startCrowdTest, getCrowdTestProgress, publishContent } from './services/api'
-import type { ContentItem, CrowdTestResult } from './types/api'
+import { healthCheck, sendChatMessage, generateVariant, startCrowdTest, getCrowdTestProgress, publishContent, generateImage, generateOutline } from './services/api'
+import type { ContentItem, CrowdTestResult, PageImage } from './types/api'
 import WelcomePage from './components/WelcomePage'
 import AutoModePage from './components/AutoModePage'
 
@@ -86,7 +87,7 @@ function App() {
   const [selectedAudienceTags, setSelectedAudienceTags] = useState<string[]>(audiencePresets)
   const [customAudienceInput, setCustomAudienceInput] = useState('')
   const [customAudienceTags, setCustomAudienceTags] = useState<string[]>([])
-  const [uploadedFile, setUploadedFile] = useState<{ name: string; content: string } | null>(null)
+  const [uploadedFile, setUploadedFile] = useState<{ name: string; content: string; type?: string } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   
@@ -132,7 +133,12 @@ function App() {
     // 构建消息内容
     let messageContent = input.trim()
     if (uploadedFile) {
-      messageContent = `[上传文件: ${uploadedFile.name}]\n\n${uploadedFile.content}\n\n${messageContent}`
+      // 图片文件使用特殊格式，方便解析和显示
+      if (uploadedFile.type?.startsWith('image/')) {
+        messageContent = `[图片文件: ${uploadedFile.name}]\n${uploadedFile.content}\n\n${messageContent}`
+      } else {
+        messageContent = `[上传文件: ${uploadedFile.name}]\n\n${uploadedFile.content}\n\n${messageContent}`
+      }
     }
     
     const userMessage = { role: 'user' as const, content: messageContent }
@@ -146,7 +152,69 @@ function App() {
       addMessage({ role: 'assistant', content: response.message })
       
       if (response.task_spec) setTaskSpec(response.task_spec)
-      if (response.generated_content) setContentA(response.generated_content)
+      if (response.generated_content) {
+        // 根据 action 决定如何更新内容
+        const action = response.action || 'all'
+        
+        if (action === 'text_only') {
+          // 只改文案，保留原来的图片
+          setContentA({
+            ...response.generated_content,
+            cover_image: contentA.cover_image  // 保留原图
+          })
+          addMessage({ role: 'assistant', content: '✨ 文案已更新，图片保持不变~' })
+        } else if (action === 'image_only') {
+          // 只换图片，文案不变
+          const topic = response.task_spec?.topic || contentA.title
+          if (topic) {
+            try {
+              addMessage({ role: 'assistant', content: '🎨 正在为你生成新的封面图...' })
+              const imagePrompt = `${topic}，${contentA.title}，${(contentA.body || '').slice(0, 80)}`
+              const imageUrl = await generateImage(imagePrompt, '小红书风格')
+              setContentA({ ...contentA, cover_image: imageUrl })
+              addMessage({ role: 'assistant', content: '✨ 封面图已更新，文案保持不变~' })
+            } catch (error) {
+              console.error('AI配图生成失败:', error)
+              addMessage({ role: 'assistant', content: '⚠️ 图片生成失败，你可以手动上传封面图。' })
+            }
+          }
+        } else {
+          // action === 'all'，全部重新生成
+          setContentA(response.generated_content)
+          
+          // 自动生成配图
+          if (!response.generated_content.cover_image) {
+            const topic = response.task_spec?.topic || response.generated_content.title
+            if (topic) {
+              try {
+                console.log('正在使用 AI 为内容生成封面图...')
+                addMessage({ role: 'assistant', content: '🎨 正在为你生成专属封面图...' })
+                const imagePrompt = `${topic}，${response.generated_content.title}，${(response.generated_content.body || '').slice(0, 80)}`
+                const imageUrl = await generateImage(imagePrompt, '小红书风格')
+                console.log('AI配图生成成功')
+                setContentA({ ...response.generated_content, cover_image: imageUrl })
+                addMessage({ role: 'assistant', content: '✨ 已为你生成专属封面图，你也可以更换其他图片。' })
+              } catch (error) {
+                console.error('AI配图生成失败:', error)
+                addMessage({ role: 'assistant', content: '⚠️ 图片生成失败，你可以手动上传封面图。' })
+              }
+            }
+          }
+        }
+      } else if (response.action === 'image_only' && contentA.title) {
+        // 没有返回 generated_content 但意图是换图
+        const topic = response.task_spec?.topic || contentA.title
+        try {
+          addMessage({ role: 'assistant', content: '🎨 正在为你生成新的封面图...' })
+          const imagePrompt = `${topic}，${contentA.title}，${(contentA.body || '').slice(0, 80)}`
+          const imageUrl = await generateImage(imagePrompt, '小红书风格')
+          setContentA({ ...contentA, cover_image: imageUrl })
+          addMessage({ role: 'assistant', content: '✨ 封面图已更新~' })
+        } catch (error) {
+          console.error('AI配图生成失败:', error)
+          addMessage({ role: 'assistant', content: '⚠️ 图片生成失败，你可以手动上传封面图。' })
+        }
+      }
     } catch {
       addMessage({ role: 'assistant', content: '抱歉，服务暂时不可用，请稍后重试。' })
     } finally {
@@ -162,20 +230,23 @@ function App() {
     // 支持的文件格式
     const textTypes = ['.txt', '.md', '.json', '.csv', '.xml', '.html', '.css', '.js', '.ts']
     const docTypes = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']
+    const imageTypes = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.heic', '.heif', '.bmp', '.tiff', '.tif']
     const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'))
     
-    const isTextFile = textTypes.includes(ext) || file.type.startsWith('text/')
-    const isDocFile = docTypes.includes(ext)
+    // 优先通过 MIME 类型判断，这样可以支持更多格式
+    const isTextFile = file.type.startsWith('text/') || textTypes.includes(ext)
+    const isDocFile = docTypes.includes(ext) || file.type.includes('pdf') || file.type.includes('document') || file.type.includes('sheet') || file.type.includes('presentation')
+    const isImageFile = file.type.startsWith('image/') || imageTypes.includes(ext)
     
-    if (!isTextFile && !isDocFile) {
-      alert('支持的文件格式：\n• 文本：txt, md, json, csv\n• 文档：pdf, doc, docx, xls, xlsx, ppt, pptx')
+    if (!isTextFile && !isDocFile && !isImageFile) {
+      alert('支持的文件格式：\n• 文本：txt, md, json, csv\n• 文档：pdf, doc, docx, xls, xlsx, ppt, pptx\n• 图片：jpg, png, gif, webp, heic 等所有图片格式')
       return
     }
     
-    // 文档类文件限制 5MB，文本类限制 500KB
-    const maxSize = isDocFile ? 5 * 1024 * 1024 : 500 * 1024
+    // 图片类文件限制 10MB，文档类文件限制 5MB，文本类限制 500KB
+    const maxSize = isImageFile ? 10 * 1024 * 1024 : isDocFile ? 5 * 1024 * 1024 : 500 * 1024
     if (file.size > maxSize) {
-      alert(`文件大小不能超过 ${isDocFile ? '5MB' : '500KB'}`)
+      alert(`文件大小不能超过 ${isImageFile ? '10MB' : isDocFile ? '5MB' : '500KB'}`)
       return
     }
     
@@ -183,14 +254,23 @@ function App() {
       // 对于 PDF/Office 文件，只记录文件名（后端需要处理解析）
       setUploadedFile({ 
         name: file.name, 
-        content: `[文档文件: ${file.name}]\n\n注意：这是一个 ${ext.toUpperCase()} 文件。请在对话中描述文件的主要内容，或者将关键信息复制粘贴到这里。` 
+        content: `[文档文件: ${file.name}]\n\n注意：这是一个 ${ext.toUpperCase()} 文件。请在对话中描述文件的主要内容，或者将关键信息复制粘贴到这里。`,
+        type: file.type
       })
+    } else if (isImageFile) {
+      // 图片文件读取为 DataURL
+      const reader = new FileReader()
+      reader.onload = (event) => {
+        const content = event.target?.result as string
+        setUploadedFile({ name: file.name, content, type: file.type })
+      }
+      reader.readAsDataURL(file)
     } else {
       // 文本文件直接读取内容
       const reader = new FileReader()
       reader.onload = (event) => {
         const content = event.target?.result as string
-        setUploadedFile({ name: file.name, content })
+        setUploadedFile({ name: file.name, content, type: file.type })
       }
       reader.readAsText(file)
     }
@@ -388,11 +468,15 @@ function App() {
             {messages.map((msg, idx) => {
               // 解析消息，检查是否包含文件附件 - 使用更宽松的匹配
               const fileMatch = msg.content.match(/^\[上传文件: (.+?)\]\n\n/)
+              const imageMatch = msg.content.match(/^\[图片文件: (.+?)\]\n(data:image\/[^;]+;base64,[^\n]+)/)
               const hasFile = msg.role === 'user' && fileMatch
+              const hasImage = msg.role === 'user' && imageMatch
               const fileName = hasFile ? fileMatch[1] : null
+              const imageName = hasImage ? imageMatch[1] : null
+              const imageData = hasImage ? imageMatch[2] : null
               // 提取用户实际输入的文字（文件内容之后的部分）
               let userText = msg.content
-              if (hasFile) {
+              if (hasFile || hasImage) {
                 // 找到文件内容后的用户文字（最后一个\n\n之后的内容）
                 const parts = msg.content.split('\n\n')
                 userText = parts.length > 2 ? parts[parts.length - 1] : ''
@@ -401,8 +485,19 @@ function App() {
               return (
                 <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className="max-w-[90%] space-y-2">
+                    {/* 图片附件 - 独立显示 */}
+                    {hasImage && imageName && imageData && (
+                      <div className="flex justify-end">
+                        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                          <img src={imageData} alt={imageName} className="max-w-[300px] max-h-[300px] object-contain" />
+                          <div className="px-3 py-2 border-t border-slate-100">
+                            <span className="text-xs text-slate-500">{imageName}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {/* 文件附件卡片 - 独立显示在消息上方 */}
-                    {hasFile && fileName && (
+                    {hasFile && fileName && !hasImage && (
                       <div className="flex justify-end">
                         <div className="flex items-center gap-3 px-4 py-3 bg-white rounded-xl border border-slate-200 shadow-sm">
                           <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
@@ -444,13 +539,23 @@ function App() {
           
           <div className="p-4 border-t border-slate-200 bg-white">
             {uploadedFile && (
-              <div className="mb-3 flex items-center gap-3 px-4 py-3 bg-white border border-slate-200 rounded-xl shadow-sm">
-                <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <FileText className="w-5 h-5 text-blue-500" />
-                </div>
+              <div className="mb-3 flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-blue-50 to-white border border-blue-200 rounded-xl shadow-sm">
+                {uploadedFile.type?.startsWith('image/') ? (
+                  <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 border border-blue-200">
+                    <img src={uploadedFile.content} alt={uploadedFile.name} className="w-full h-full object-cover" />
+                  </div>
+                ) : (
+                  <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <FileText className="w-5 h-5 text-blue-500" />
+                  </div>
+                )}
                 <div className="flex-1 min-w-0">
                   <span className="block text-sm font-medium text-slate-700 truncate">{uploadedFile.name}</span>
-                  <span className="text-xs text-slate-400">准备发送</span>
+                  <span className="text-xs text-blue-500">
+                    {uploadedFile.type?.startsWith('image/') 
+                      ? '📷 AI 将识别图片内容，可在下方输入文字一起发送' 
+                      : '📎 可在下方输入文字一起发送'}
+                  </span>
                 </div>
                 <button onClick={() => setUploadedFile(null)} className="text-slate-400 hover:text-slate-700 p-1">
                   <X className="w-4 h-4" />
@@ -459,7 +564,7 @@ function App() {
             )}
             
             <div className="flex gap-2 items-end">
-              <input ref={fileInputRef} type="file" accept=".txt,.md,.json,.csv,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,text/*" onChange={handleFileUpload} className="hidden" />
+              <input ref={fileInputRef} type="file" accept="image/*,text/*,.txt,.md,.json,.csv,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={handleFileUpload} className="hidden" />
               <button 
                 onClick={() => fileInputRef.current?.click()}
                 className="mb-1 p-2 text-slate-400 hover:text-[#ff2442] hover:bg-slate-100 rounded-xl transition-all border border-transparent hover:border-slate-200"
@@ -469,24 +574,30 @@ function App() {
               </button>
               
               <div className="flex-1 relative">
-                <input
-                  type="text"
+                <textarea
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={(e) => {
+                    setInput(e.target.value)
+                    // 自动调整高度
+                    e.target.style.height = 'auto'
+                    e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px'
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
                       handleSend()
                     }
                   }}
-                  placeholder="输入消息，回车发送..."
-                  className="w-full pl-4 pr-12 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442] focus:bg-white transition-all"
+                  placeholder="输入消息，回车发送，Shift+回车换行..."
+                  rows={1}
+                  className="w-full pl-4 pr-12 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442] focus:bg-white transition-all resize-none overflow-y-auto leading-relaxed"
+                  style={{ maxHeight: '150px' }}
                 />
-                {/* 发送按钮修正：绝对定位 + 垂直居中 */}
+                {/* 发送按钮：绝对定位 + 底部对齐 */}
                 <button
                   onClick={handleSend}
                   disabled={(!input.trim() && !uploadedFile) || isLoading}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-[#ff2442] hover:bg-red-50 rounded-lg transition-all disabled:opacity-30 flex items-center justify-center"
+                  className="absolute right-2 bottom-2 p-1.5 text-slate-400 hover:text-[#ff2442] hover:bg-red-50 rounded-lg transition-all disabled:opacity-30 flex items-center justify-center"
                 >
                   <Send className="w-4 h-4" />
                 </button>
@@ -515,21 +626,12 @@ function App() {
             </div>
             
             <div className="flex items-center gap-3">
-              {contentA.title && (
-                <button
-                  onClick={handleGenerateB}
-                  disabled={isGeneratingB}
-                  className="flex items-center gap-2 px-4 py-2 text-xs font-semibold bg-white text-[#ff2442] border border-red-200 rounded-lg hover:bg-red-50 hover:border-red-300 transition-all disabled:opacity-50 shadow-sm"
-                >
-                  {isGeneratingB ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                  {contentB.title ? '重新生成 B' : '生成版本 B'}
-                </button>
-              )}
+              {/* 暂时隐藏版本B生成按钮 */}
             </div>
           </div>
           
           <div className="flex-1 overflow-hidden p-6">
-            <div className="h-full grid grid-cols-2 gap-6 max-w-7xl mx-auto">
+            <div className="h-full max-w-5xl mx-auto overflow-y-auto">
               <EditorCard
                 version="A"
                 label="Version A"
@@ -539,27 +641,14 @@ function App() {
                 isPublishing={isPublishing}
                 colorTheme="blue"
               />
-              <EditorCard
-                version="B"
-                label="Version B"
-                content={contentB}
-                onChange={setContentB}
-                onPublish={() => handlePublish('B')}
-                isPublishing={isPublishing}
-                isEmpty={!contentB.title}
-                onGenerate={handleGenerateB}
-                isGenerating={isGeneratingB}
-                colorTheme="red"
-              />
             </div>
           </div>
         </div>
         
-        {/* 右侧分隔条 */}
-        <Resizer onDrag={handleRightResize} side="right" />
+        {/* 暂时隐藏右侧测试面板和分隔条 */}
+        {false && <Resizer onDrag={handleRightResize} side="right" />}
 
-        {/* 右栏：测试面板 - 可拖拽 */}
-        <div 
+        {false && <div 
           className="border-l border-slate-200 bg-white flex flex-col" 
           style={{ width: rightWidth, flexShrink: 0, flexGrow: 0 }}
         >
@@ -667,14 +756,14 @@ function App() {
               )}
             </div>
           </div>
-        </div>
+        </div>}
       </main>
     </div>
   )
 }
 
 // ----------------------------------------------------------------------------
-// 专业编辑器组件 (EditorCard)
+// 专业编辑器组件 (EditorCard) - 支持多图系列
 // ----------------------------------------------------------------------------
 
 function EditorCard({ 
@@ -693,27 +782,56 @@ function EditorCard({
 }) {
   const [activeTab, setActiveTab] = useState<'upload' | 'url' | 'search'>('upload')
   const [showImgMgr, setShowImgMgr] = useState(false)
+  const [showImagePreview, setShowImagePreview] = useState(false)
+  const [currentPageIndex, setCurrentPageIndex] = useState(0)
+  const [isGeneratingPage, setIsGeneratingPage] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   
-  // 颜色配置 - 蓝色+小红书红配色
+  // 使用本地状态管理 pages，并与 content.images 同步
+  const defaultPages: PageImage[] = [
+    { index: 0, type: 'cover', content: content.title || '封面', image: content.cover_image, status: content.cover_image ? 'done' : 'pending' }
+  ]
+  const [localPages, setLocalPages] = useState<PageImage[]>(content.images || defaultPages)
+  
+  // 同步外部 content.images 变化到本地状态
+  useEffect(() => {
+    if (content.images && content.images.length > 0) {
+      setLocalPages(content.images)
+    }
+  }, [content.images])
+  
+  const pages = localPages
+  const currentPage = pages[currentPageIndex] || pages[0]
+  
   const theme = {
-    blue: { accent: 'text-blue-500', border: 'focus:border-blue-400', ring: 'focus:ring-blue-100', btn: 'bg-blue-500 hover:bg-blue-600', barColor: 'bg-blue-500', labelBg: 'bg-blue-500', labelText: 'text-white' },
-    red: { accent: 'text-[#ff2442]', border: 'focus:border-[#ff2442]', ring: 'focus:ring-red-100', btn: 'bg-[#ff2442] hover:bg-[#e61f3d]', barColor: 'bg-[#ff2442]', labelBg: 'bg-[#ff2442]', labelText: 'text-white' }
+    blue: { accent: 'text-blue-500', btn: 'bg-blue-500 hover:bg-blue-600', barColor: 'bg-blue-500' },
+    red: { accent: 'text-[#ff2442]', btn: 'bg-[#ff2442] hover:bg-[#e61f3d]', barColor: 'bg-[#ff2442]' }
   }[colorTheme]
 
-  // 图片处理 logic
+  // 同步更新 images 到 content 和本地状态
+  const updatePages = (newPages: PageImage[]) => {
+    setLocalPages(newPages)  // 立即更新本地状态
+    const coverPage = newPages.find(p => p.type === 'cover')
+    onChange({ 
+      ...content, 
+      images: newPages,
+      cover_image: coverPage?.image  // 保持向后兼容
+    })
+  }
+
   const handleLocalUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
     reader.onload = (ev) => {
-      onChange({ ...content, cover_image: ev.target?.result as string })
+      const newPages = [...pages]
+      newPages[currentPageIndex] = { ...currentPage, image: ev.target?.result as string, status: 'done' }
+      updatePages(newPages)
       setShowImgMgr(false)
     }
     reader.readAsDataURL(file)
   }
 
-  // 标签处理 logic
   const handleTagKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       const val = e.currentTarget.value.trim()
@@ -724,21 +842,162 @@ function EditorCard({
     }
   }
 
+  // 添加新页面
+  const addPage = () => {
+    const newIndex = pages.length
+    const newPage: PageImage = {
+      index: newIndex,
+      type: 'content',
+      content: `内容页 ${newIndex}`,
+      status: 'pending'
+    }
+    updatePages([...pages, newPage])
+    setCurrentPageIndex(newIndex)
+  }
+
+  // AI 生成大纲（RedInk 风格）
+  const [isGeneratingOutline, setIsGeneratingOutline] = useState(false)
+  const generateOutlineFromTitle = async () => {
+    if (!content.title) {
+      alert('请先输入标题')
+      return
+    }
+    setIsGeneratingOutline(true)
+    try {
+      const result = await generateOutline(content.title, 6, '小红书风格')
+      if (result.success && result.pages) {
+        // 转换为 PageImage 格式
+        const newPages: PageImage[] = result.pages.map((p, idx) => ({
+          index: idx,
+          type: p.type as 'cover' | 'content' | 'summary',
+          content: p.content,
+          status: 'pending' as const
+        }))
+        updatePages(newPages)
+        setCurrentPageIndex(0)
+        // 更新标题
+        if (result.title && result.title !== content.title) {
+          onChange({ ...content, title: result.title, images: newPages })
+        }
+      }
+    } catch (error) {
+      console.error('生成大纲失败:', error)
+    } finally {
+      setIsGeneratingOutline(false)
+    }
+  }
+
+  // 删除页面
+  const removePage = (index: number) => {
+    if (pages.length <= 1) return
+    const newPages = pages.filter((_, i) => i !== index).map((p, i) => ({ ...p, index: i }))
+    updatePages(newPages)
+    if (currentPageIndex >= newPages.length) {
+      setCurrentPageIndex(newPages.length - 1)
+    }
+  }
+
+  // 更新当前页面文案
+  const updatePageContent = (newContent: string) => {
+    const newPages = [...pages]
+    newPages[currentPageIndex] = { ...currentPage, content: newContent }
+    updatePages(newPages)
+  }
+
+  // 生成当前页图片
+  const generateCurrentPageImage = async () => {
+    setIsGeneratingPage(true)
+    try {
+      const prompt = currentPage.content || content.title || '小红书风格图片'
+      const imageUrl = await generateImage(prompt, '小红书风格')
+      const newPages = [...pages]
+      newPages[currentPageIndex] = { ...currentPage, image: imageUrl, status: 'done' }
+      updatePages(newPages)
+    } catch (error) {
+      console.error('生成图片失败:', error)
+      const newPages = [...pages]
+      newPages[currentPageIndex] = { ...currentPage, status: 'error', error: '生成失败' }
+      updatePages(newPages)
+    } finally {
+      setIsGeneratingPage(false)
+    }
+  }
+
+  // 批量生成所有图片（逐个生成并实时更新）
+  const generateAllImages = async () => {
+    setIsGeneratingPage(true)
+    
+    // 使用当前 pages 的副本，并逐步更新
+    let currentPages = [...pages]
+    
+    // 找到封面页索引
+    const coverIdx = currentPages.findIndex(p => p.type === 'cover')
+    
+    // 第一步：先生成封面
+    if (coverIdx >= 0 && !currentPages[coverIdx].image) {
+      const coverPage = currentPages[coverIdx]
+      // 标记封面正在生成
+      currentPages[coverIdx] = { ...coverPage, status: 'generating' }
+      updatePages([...currentPages])
+      
+      try {
+        const coverPrompt = `${content.title}\n\n${coverPage.content}`
+        const coverImage = await generateImage(coverPrompt, '小红书风格')
+        if (coverImage) {
+          currentPages[coverIdx] = { ...coverPage, image: coverImage, status: 'done' }
+          updatePages([...currentPages])
+          console.log('✅ 封面生成成功')
+        } else {
+          currentPages[coverIdx] = { ...coverPage, status: 'error', error: '封面生成失败' }
+          updatePages([...currentPages])
+        }
+      } catch (e) {
+        console.error('封面生成失败:', e)
+        currentPages[coverIdx] = { ...coverPage, status: 'error', error: '封面生成异常' }
+        updatePages([...currentPages])
+      }
+    }
+    
+    // 第二步：逐个生成其他页面
+    for (let i = 0; i < currentPages.length; i++) {
+      if (i === coverIdx) continue  // 跳过已处理的封面
+      
+      const page = currentPages[i]
+      if (page.status === 'done' && page.image) continue  // 跳过已有图片的
+      
+      // 标记正在生成
+      currentPages[i] = { ...page, status: 'generating' }
+      updatePages([...currentPages])
+      setCurrentPageIndex(i)  // 切换到当前正在生成的页面
+      
+      try {
+        const prompt = page.content || `内容页 ${i + 1}`
+        const imageUrl = await generateImage(prompt, '小红书风格')
+        
+        if (imageUrl) {
+          currentPages[i] = { ...page, image: imageUrl, status: 'done' }
+          console.log(`✅ 第 ${i + 1} 页生成成功`)
+        } else {
+          currentPages[i] = { ...page, status: 'error', error: '生成失败' }
+        }
+        updatePages([...currentPages])
+      } catch (e) {
+        console.error(`第 ${i + 1} 页生成失败:`, e)
+        currentPages[i] = { ...page, status: 'error', error: '生成异常' }
+        updatePages([...currentPages])
+      }
+    }
+    
+    setIsGeneratingPage(false)
+    const successCount = currentPages.filter(p => p.status === 'done').length
+    console.log(`批量生成完成: ${successCount}/${currentPages.length} 成功`)
+  }
+
   if (isEmpty && onGenerate) {
     return (
-      <div className="h-full rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center gap-4 transition-all hover:border-slate-300 hover:bg-slate-100">
-        <div className="w-16 h-16 rounded-full bg-white shadow-sm flex items-center justify-center">
-          <Wand2 className={`w-8 h-8 ${theme.accent}`} />
-        </div>
-        <div className="text-center">
-          <h3 className="font-semibold text-slate-700">版本 B 为空</h3>
-          <p className="text-sm text-slate-400 mt-1">点击生成即刻开始测试</p>
-        </div>
-        <button
-          onClick={onGenerate}
-          disabled={isGenerating}
-          className={`px-6 py-2.5 rounded-lg text-white font-medium text-sm shadow-md shadow-slate-200 transition-all ${theme.btn} disabled:opacity-70`}
-        >
+      <div className="h-full rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center gap-4">
+        <Wand2 className={`w-8 h-8 ${theme.accent}`} />
+        <button onClick={onGenerate} disabled={isGenerating} className={`px-6 py-2.5 rounded-lg text-white font-medium text-sm ${theme.btn} disabled:opacity-70`}>
           {isGenerating ? 'AI 正在生成内容...' : '一键生成版本 B'}
         </button>
       </div>
@@ -746,197 +1005,415 @@ function EditorCard({
   }
 
   return (
-    <div className="h-full bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden relative group">
-       {/* 顶部标签 */}
-      <div className={`h-1 absolute top-0 left-0 right-0 ${theme.barColor}`} />
-      
-      <div className="flex-1 flex flex-col overflow-y-auto">
-        {/* 图片区域 - 小红书风格 3:4 比例 */}
-        <div className="relative w-full bg-slate-100 border-b border-slate-100 group-image flex-shrink-0" style={{ aspectRatio: '3/4', maxHeight: '280px' }}>
-          {content.cover_image ? (
-            <>
-              <img src={content.cover_image} alt="Cover" className="w-full h-full object-contain bg-slate-50" />
-              <button 
-                onClick={() => setShowImgMgr(!showImgMgr)}
-                className="absolute bottom-3 right-3 bg-black/70 text-white text-xs px-3 py-1.5 rounded-full hover:bg-black transition-colors backdrop-blur-sm"
+    <>
+      {/* 图片全屏预览弹窗 */}
+      {showImagePreview && currentPage.image && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center cursor-zoom-out backdrop-blur-sm"
+          onClick={() => setShowImagePreview(false)}
+        >
+          <img 
+            src={currentPage.image} 
+            alt="预览" 
+            className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button 
+            onClick={() => setShowImagePreview(false)}
+            className="absolute top-6 right-6 text-white/80 hover:text-white bg-black/50 rounded-full p-2"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          {/* 预览时的页面导航 */}
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/50 rounded-full px-4 py-2 backdrop-blur-sm">
+            <button 
+              onClick={(e) => { e.stopPropagation(); setCurrentPageIndex(Math.max(0, currentPageIndex - 1)) }}
+              disabled={currentPageIndex === 0}
+              className="text-white disabled:opacity-30"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <span className="text-white text-sm">{currentPageIndex + 1} / {pages.length}</span>
+            <button 
+              onClick={(e) => { e.stopPropagation(); setCurrentPageIndex(Math.min(pages.length - 1, currentPageIndex + 1)) }}
+              disabled={currentPageIndex === pages.length - 1}
+              className="text-white disabled:opacity-30"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        {/* 顶部色条 */}
+        <div className={`h-1 ${theme.barColor}`} />
+        
+        {/* 分栏主体 */}
+        <div className="flex min-h-[520px]">
+          
+          {/* 左侧：页面缩略图列表 */}
+          <div className="w-[100px] flex-shrink-0 border-r border-slate-100 bg-slate-50/80 flex flex-col">
+            <div className="p-2 border-b border-slate-100">
+              <span className="text-[10px] font-medium text-slate-400 uppercase">页面</span>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-2">
+              {pages.map((page, idx) => (
+                <div 
+                  key={idx}
+                  onClick={() => setCurrentPageIndex(idx)}
+                  className={`relative group cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${
+                    currentPageIndex === idx
+                      ? 'border-blue-500 shadow-md'
+                      : 'border-transparent hover:border-slate-300'
+                  }`}
+                >
+                  {/* 缩略图 */}
+                  <div className="aspect-[3/4] bg-slate-100 flex items-center justify-center">
+                    {page.image ? (
+                      <img src={page.image} alt={`第${idx + 1}页`} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="text-center">
+                        {page.status === 'generating' ? (
+                          <Loader2 className="w-4 h-4 text-slate-400 animate-spin mx-auto" />
+                        ) : (
+                          <ImageIcon className="w-4 h-4 text-slate-300 mx-auto" />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {/* 页码标签 */}
+                  <div className="absolute bottom-1 left-1 bg-black/60 text-white text-[9px] px-1.5 py-0.5 rounded">
+                    {idx === 0 ? '封面' : idx}
+                  </div>
+                  {/* 删除按钮 */}
+                  {pages.length > 1 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); removePage(idx) }}
+                      className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {/* 添加页面按钮 */}
+            <div className="p-2 border-t border-slate-100 space-y-1.5">
+              <button
+                onClick={addPage}
+                className="w-full py-1.5 rounded-lg border border-slate-200 text-slate-400 hover:border-blue-400 hover:text-blue-500 transition-all flex items-center justify-center gap-1 text-[10px]"
               >
-                更换图片
+                <Plus className="w-3 h-3" />
+                添加页
               </button>
-            </>
-          ) : (
-             <div 
-              onClick={() => setShowImgMgr(true)}
-              className="w-full h-full flex flex-col items-center justify-center cursor-pointer hover:bg-slate-200/50 transition-colors gap-3"
-             >
-               <div className="w-12 h-12 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-400">
-                 <ImageIcon className="w-6 h-6" />
-               </div>
-               <span className="text-sm font-medium text-slate-500">上传封面图</span>
-             </div>
-          )}
-
-          {/* 图片管理器浮窗 */}
-          {showImgMgr && (
-            <div className="absolute inset-0 bg-white/95 backdrop-blur-md z-20 flex flex-col p-4 animate-in fade-in zoom-in duration-200">
-              <div className="flex justify-between items-center mb-4">
-                <span className="font-semibold text-slate-700 text-sm">图片管理</span>
-                <button onClick={() => setShowImgMgr(false)}><X className="w-4 h-4 text-slate-400" /></button>
-              </div>
-              
-              <div className="flex gap-2 mb-4 p-1 bg-slate-100 rounded-lg">
-                {(['upload', 'url', 'search'] as const).map(t => (
-                  <button 
-                    key={t}
-                    onClick={() => setActiveTab(t)}
-                    className={`flex-1 py-1.5 text-xs font-medium rounded-md capitalize ${activeTab === t ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                  >
-                    {t === 'upload' ? '本地上传' : t === 'url' ? '链接' : '搜索'}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex-1">
-                {activeTab === 'upload' && (
-                  <div 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="h-full border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/50 transition-all gap-2"
-                  >
-                    <Upload className="w-8 h-8 text-slate-300" />
-                    <span className="text-xs text-slate-500">点击选择图片文件</span>
-                    <input ref={fileInputRef} type="file" accept="image/*" onChange={handleLocalUpload} className="hidden" />
-                  </div>
+              <button
+                onClick={generateOutlineFromTitle}
+                disabled={isGeneratingOutline || !content.title}
+                className="w-full py-1.5 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:opacity-90 transition-all flex items-center justify-center gap-1 text-[10px] disabled:opacity-50"
+              >
+                {isGeneratingOutline ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <ListPlus className="w-3 h-3" />
                 )}
-                
-                {activeTab === 'url' && (
-                  <div className="space-y-3 pt-4">
-                    <input 
-                      type="text" 
-                      placeholder="https://example.com/image.jpg"
-                      onKeyDown={(e) => {
-                         if(e.key === 'Enter') {
-                            onChange({ ...content, cover_image: e.currentTarget.value })
-                            setShowImgMgr(false)
-                         }
-                      }}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#ff2442]"
-                    />
-                    <p className="text-xs text-slate-400">输入 URL 并回车</p>
-                  </div>
-                )}
-
-                {activeTab === 'search' && (
-                   <ImageSearchPanel onSelect={(url) => { onChange({...content, cover_image: url}); setShowImgMgr(false); }} query={content.title} />
-                )}
+                {isGeneratingOutline ? '生成中...' : 'AI大纲'}
+              </button>
+            </div>
+          </div>
+          
+          {/* 中间：当前页图片区域 */}
+          <div className="w-[300px] flex-shrink-0 border-r border-slate-100 bg-slate-50/50 flex flex-col">
+            <div className="p-3 border-b border-slate-100 flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-600">
+                {currentPageIndex === 0 ? '封面图' : `第 ${currentPageIndex} 页`}
+              </span>
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={() => setCurrentPageIndex(Math.max(0, currentPageIndex - 1))}
+                  disabled={currentPageIndex === 0}
+                  className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 transition-colors"
+                >
+                  <ChevronLeft className="w-4 h-4 text-slate-500" />
+                </button>
+                <span className="text-xs text-slate-400">{currentPageIndex + 1}/{pages.length}</span>
+                <button 
+                  onClick={() => setCurrentPageIndex(Math.min(pages.length - 1, currentPageIndex + 1))}
+                  disabled={currentPageIndex === pages.length - 1}
+                  className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 transition-colors"
+                >
+                  <ChevronRight className="w-4 h-4 text-slate-500" />
+                </button>
               </div>
             </div>
-          )}
-        </div>
-
-        {/* 内容编辑区域 */}
-        <div className="p-5 flex-1 flex flex-col gap-5">
-           {/* 标题 */}
-           <div className="space-y-1">
-             <input
-               type="text"
-               value={content.title}
-               onChange={(e) => onChange({...content, title: e.target.value})}
-               placeholder="输入一个吸引人的标题..."
-               className={`w-full text-lg font-bold text-slate-800 placeholder:text-slate-300 border-none p-0 focus:ring-0 bg-transparent`}
-             />
-             <div className="h-0.5 w-10 bg-slate-200 rounded-full" />
-           </div>
-
-           {/* 正文 */}
-           <textarea
-             value={content.body}
-             onChange={(e) => onChange({...content, body: e.target.value})}
-             placeholder="在这里输入笔记正文..."
-             className="w-full flex-1 resize-none text-sm leading-relaxed text-slate-600 placeholder:text-slate-300 border-none p-0 focus:ring-0 bg-transparent"
-           />
-
-           {/* 标签 */}
-           <div className="space-y-2 pt-4 border-t border-slate-100">
-             <div className="flex flex-wrap gap-2">
-               {content.tags.map(tag => (
-                 <span key={tag} className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-600 text-xs rounded-md">
-                   #{tag}
-                   <button onClick={() => onChange({...content, tags: content.tags.filter(t => t !== tag)})} className="hover:text-red-500"><X className="w-3 h-3" /></button>
-                 </span>
-               ))}
-               <div className="flex items-center gap-1 text-slate-400 bg-slate-50 px-2 py-1 rounded-md border border-slate-100 focus-within:border-[#ff2442] focus-within:ring-1 focus-within:ring-red-100 transition-all">
-                  <Plus className="w-3 h-3" />
-                  <input 
-                    type="text" 
-                    placeholder="标签" 
-                    onKeyDown={handleTagKey}
-                    className="w-16 text-xs bg-transparent border-none p-0 focus:ring-0 text-slate-700 placeholder:text-slate-400"
+            
+            <div className="relative flex-1 flex items-center justify-center p-3">
+              {currentPage.image ? (
+                <div className="relative w-full h-full flex items-center justify-center">
+                  <img 
+                    src={currentPage.image} 
+                    alt={`第${currentPageIndex + 1}页`}
+                    className="max-w-full max-h-full object-contain rounded-lg cursor-zoom-in hover:shadow-lg transition-shadow"
+                    onClick={() => setShowImagePreview(true)}
                   />
-               </div>
-             </div>
-           </div>
+                  <div className="absolute bottom-2 right-2 flex gap-1.5">
+                    <button 
+                      onClick={() => setShowImagePreview(true)}
+                      className="bg-black/60 text-white text-[10px] px-2 py-1 rounded-full hover:bg-black/80 transition-colors backdrop-blur-sm"
+                    >
+                      🔍
+                    </button>
+                    <button 
+                      onClick={() => setShowImgMgr(true)}
+                      className="bg-black/60 text-white text-[10px] px-2 py-1 rounded-full hover:bg-black/80 transition-colors backdrop-blur-sm"
+                    >
+                      换图
+                    </button>
+                    <button 
+                      onClick={generateCurrentPageImage}
+                      disabled={isGeneratingPage}
+                      className="bg-black/60 text-white text-[10px] px-2 py-1 rounded-full hover:bg-black/80 transition-colors backdrop-blur-sm disabled:opacity-50"
+                    >
+                      {isGeneratingPage ? '...' : '🎨'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div 
+                  onClick={() => isGeneratingPage ? null : generateCurrentPageImage()}
+                  className={`w-full h-64 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center transition-all gap-2 ${
+                    isGeneratingPage ? 'cursor-wait' : 'cursor-pointer hover:border-blue-400 hover:bg-blue-50/30'
+                  }`}
+                >
+                  {isGeneratingPage ? (
+                    <>
+                      <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+                      <span className="text-xs text-blue-500">AI 生成中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-8 h-8 text-slate-300" />
+                      <span className="text-xs text-slate-500">点击 AI 生成图片</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setShowImgMgr(true) }}
+                        className="text-[10px] text-blue-500 hover:underline"
+                      >
+                        或手动上传
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* 图片管理器浮窗 */}
+              {showImgMgr && (
+                <div className="absolute inset-0 bg-white/98 backdrop-blur-md z-20 flex flex-col p-4 animate-in fade-in zoom-in duration-200">
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="font-semibold text-sm text-slate-700">图片管理</span>
+                    <button onClick={() => setShowImgMgr(false)}><X className="w-4 h-4 text-slate-400 hover:text-slate-600" /></button>
+                  </div>
+                  
+                  <div className="flex gap-1 mb-3 p-1 bg-slate-100 rounded-lg">
+                    {(['upload', 'url', 'search'] as const).map(t => (
+                      <button 
+                        key={t}
+                        onClick={() => setActiveTab(t)}
+                        className={`flex-1 py-1.5 text-[10px] font-medium rounded-md ${activeTab === t ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        {t === 'upload' ? '📁 上传' : t === 'url' ? '🔗 链接' : '🎨 AI'}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex-1 overflow-hidden">
+                    {activeTab === 'upload' && (
+                      <div 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="h-full border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/50 transition-all gap-2"
+                      >
+                        <Upload className="w-6 h-6 text-slate-300" />
+                        <span className="text-xs text-slate-500">选择图片</span>
+                        <input ref={fileInputRef} type="file" accept="image/*" onChange={handleLocalUpload} className="hidden" />
+                      </div>
+                    )}
+                    
+                    {activeTab === 'url' && (
+                      <div className="space-y-2 pt-2">
+                        <input 
+                          type="text" 
+                          placeholder="https://..."
+                          onKeyDown={(e) => {
+                            if(e.key === 'Enter') {
+                              const newPages = [...pages]
+                              newPages[currentPageIndex] = { ...currentPage, image: e.currentTarget.value, status: 'done' }
+                              updatePages(newPages)
+                              setShowImgMgr(false)
+                            }
+                          }}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-[#ff2442]"
+                        />
+                        <p className="text-[10px] text-slate-400">粘贴 URL 按回车</p>
+                      </div>
+                    )}
+
+                    {activeTab === 'search' && (
+                      <ImageSearchPanel 
+                        onSelect={(url) => { 
+                          const newPages = [...pages]
+                          newPages[currentPageIndex] = { ...currentPage, image: url, status: 'done' }
+                          updatePages(newPages)
+                          setShowImgMgr(false)
+                        }} 
+                        query={currentPage.content || content.title} 
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 当前页文案编辑 */}
+            <div className="p-3 border-t border-slate-100">
+              <label className="text-[10px] font-medium text-slate-400 uppercase mb-1 block">页面描述</label>
+              <textarea
+                value={currentPage.content}
+                onChange={(e) => updatePageContent(e.target.value)}
+                placeholder="描述这一页的内容..."
+                className="w-full h-16 resize-none text-xs text-slate-600 placeholder:text-slate-300 border border-slate-100 rounded-lg p-2 focus:ring-1 focus:ring-blue-100 focus:border-blue-300 bg-white transition-all"
+              />
+            </div>
+          </div>
+          
+          {/* 右侧：文本编辑区域 */}
+          <div className="flex-1 flex flex-col min-w-0">
+            <div className="p-5 flex-1 flex flex-col gap-3">
+              {/* 标题 */}
+              <div>
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1 block">标题</label>
+                <input
+                  type="text"
+                  value={content.title}
+                  onChange={(e) => onChange({...content, title: e.target.value})}
+                  placeholder="输入一个吸引人的标题..."
+                  className="w-full text-lg font-bold text-slate-800 placeholder:text-slate-300 border-none p-0 focus:ring-0 bg-transparent"
+                />
+                <div className="h-px w-full bg-slate-100 mt-2" />
+              </div>
+
+              {/* 正文 */}
+              <div className="flex-1 flex flex-col">
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1 block">正文</label>
+                <textarea
+                  value={content.body}
+                  onChange={(e) => onChange({...content, body: e.target.value})}
+                  placeholder="在这里输入笔记正文...&#10;&#10;话少一点，梗多一点 🤙"
+                  className="w-full flex-1 min-h-[140px] resize-none text-sm leading-relaxed text-slate-600 placeholder:text-slate-300 border border-slate-100 rounded-lg p-3 focus:ring-1 focus:ring-blue-100 focus:border-blue-300 bg-slate-50/50 transition-all"
+                />
+              </div>
+
+              {/* 标签 */}
+              <div className="pt-2 border-t border-slate-100">
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2 block">标签</label>
+                <div className="flex flex-wrap gap-2">
+                  {content.tags.map(tag => (
+                    <span key={tag} className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-600 text-xs font-medium rounded-full border border-blue-100">
+                      #{tag}
+                      <button onClick={() => onChange({...content, tags: content.tags.filter(t => t !== tag)})} className="hover:text-red-500 transition-colors"><X className="w-3 h-3" /></button>
+                    </span>
+                  ))}
+                  <div className="inline-flex items-center gap-1 text-slate-400 bg-white px-2.5 py-1 rounded-full border border-slate-200 focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-100 transition-all">
+                    <Plus className="w-3 h-3" />
+                    <input 
+                      type="text" 
+                      placeholder="添加标签" 
+                      onKeyDown={handleTagKey}
+                      className="w-20 text-xs bg-transparent border-none p-0 focus:ring-0 text-slate-700 placeholder:text-slate-400"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {/* 底部操作栏 */}
+            <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/50 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <span className={`text-sm font-bold ${theme.accent}`}>{label}</span>
+                <span className="text-xs text-slate-400">· {pages.length} 页</span>
+              </div>
+              <div className="flex gap-2 items-center">
+                <button 
+                  onClick={generateAllImages}
+                  disabled={isGeneratingPage}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 transition-all disabled:opacity-50 flex items-center gap-1"
+                >
+                  <Wand2 className="w-3 h-3" />
+                  {isGeneratingPage ? '生成中...' : '批量生图'}
+                </button>
+                <button 
+                  onClick={onPublish}
+                  disabled={isPublishing || !content.title}
+                  className={`px-4 py-1.5 text-xs font-semibold rounded-lg shadow-sm transition-all disabled:opacity-50 disabled:shadow-none hover:opacity-90 ${
+                    colorTheme === 'blue' 
+                      ? 'bg-blue-500 text-white hover:bg-blue-600' 
+                      : 'bg-[#ff2442] text-white hover:bg-[#e61f3d]'
+                  }`}
+                >
+                  {isPublishing ? '发布中...' : '发布笔记'}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-      
-      {/* 底部 Action Bar */}
-      <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/50 flex justify-between items-center">
-        <span className={`text-sm font-bold ${theme.accent}`}>{label}</span>
-        <div className="flex gap-3">
-          <button className="text-slate-400 hover:text-slate-600"><Share2 className="w-4 h-4" /></button>
-          <button 
-             onClick={onPublish}
-             disabled={isPublishing || !content.title}
-             className={`px-4 py-1.5 text-xs font-semibold rounded-lg shadow-sm transition-all disabled:opacity-50 disabled:shadow-none hover:opacity-90 ${
-               colorTheme === 'blue' 
-                 ? 'bg-blue-500 text-white hover:bg-blue-600' 
-                 : 'bg-[#ff2442] text-white hover:bg-[#e61f3d]'
-             }`}
-          >
-            {isPublishing ? '发布中...' : '发布笔记'}
-          </button>
-        </div>
-      </div>
-    </div>
+    </>
   )
 }
 
 function ImageSearchPanel({ onSelect, query }: { onSelect: (url: string) => void, query: string }) {
-  const [images, setImages] = useState<string[]>([])
+  const [image, setImage] = useState<string>('')
   const [loading, setLoading] = useState(false)
 
-  const handleSearch = async () => {
+  const handleGenerate = async () => {
     setLoading(true)
     try {
-      const res = await searchImages(query || 'lifestyle', 6)
-      setImages(res)
-    } catch {
-       // ignore
+      const imageUrl = await generateImage(query || '小红书封面图', '小红书风格')
+      setImage(imageUrl)
+    } catch (error) {
+      console.error('生成图片失败:', error)
+      alert('图片生成失败，请稍后重试')
     } finally {
       setLoading(false)
     }
   }
 
-  // Auto search on mount
-  useEffect(() => { handleSearch() }, [])
+  // Auto generate on mount
+  useEffect(() => { handleGenerate() }, [])
 
   return (
     <div className="h-full flex flex-col">
-       <div className="flex gap-2 mb-2">
-         <input 
-            className="flex-1 px-2 py-1 text-xs border border-slate-200 rounded" 
-            defaultValue={query} 
-            onChange={() => { /* no-op for now */ }}
-         />
-         <button onClick={handleSearch} className="bg-slate-100 p-1 rounded hover:bg-slate-200"><Search className="w-3 h-3 text-slate-600" /></button>
-       </div>
-       {loading ? (
-         <div className="flex-1 flex items-center justify-center"><Loader2 className="w-4 h-4 animate-spin text-slate-400" /></div>
-       ) : (
-         <div className="grid grid-cols-2 gap-2 overflow-y-auto max-h-[160px]">
-           {images.map((img, i) => (
-             <img key={i} src={img} className="w-full h-20 object-cover rounded cursor-pointer hover:opacity-80 border border-slate-100" onClick={() => onSelect(img)} />
-           ))}
-         </div>
-       )}
+      {loading && (
+        <div className="flex-1 flex flex-col items-center justify-center">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600 mb-3"></div>
+          <p className="text-sm text-slate-600">AI 正在生成图片...</p>
+        </div>
+      )}
+      {!loading && image && (
+        <div className="flex-1 flex flex-col gap-3">
+          <img src={image} alt="AI生成" className="w-full rounded-lg border border-slate-200" />
+          <button
+            onClick={() => onSelect(image)}
+            className="w-full py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors"
+          >
+            使用这张图片
+          </button>
+          <button
+            onClick={handleGenerate}
+            className="w-full py-2 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors"
+          >
+            重新生成
+          </button>
+        </div>
+      )}
     </div>
   )
 }
