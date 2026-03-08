@@ -78,12 +78,72 @@ export async function getMCPTools(): Promise<{ tools: Array<{ name: string; desc
   return response.data
 }
 
-// 搜索相关图片（智能配图）
+// 搜索相关图片（智能配图）- 已废弃
 export async function searchImages(topic: string, limit: number = 5): Promise<string[]> {
   const response = await api.get<{ images: string[]; topic: string }>('/search-images', {
     params: { topic, limit }
   })
   return response.data.images
+}
+
+// 使用 AI 生成图片（用于自动配图）
+export async function generateImage(topic: string, style: string = '小红书风格'): Promise<string> {
+  const response = await api.post<{ image: string; topic: string; success: boolean }>('/generate-image', {
+    topic,
+    style
+  })
+  return response.data.image
+}
+
+// 生成多页内容大纲 (RedInk 风格)
+export async function generateOutline(
+  topic: string,
+  pageCount: number = 6,
+  style: string = '小红书风格'
+): Promise<{
+  success: boolean
+  title: string
+  pages: Array<{
+    index: number
+    type: 'cover' | 'content' | 'summary'
+    content: string
+  }>
+}> {
+  const response = await api.post('/generate-outline', {
+    topic,
+    page_count: pageCount,
+    style
+  })
+  return response.data
+}
+
+// 批量生成多页图片 (封面优先策略)
+export async function generateBatchImages(
+  pages: Array<{ index: number; type: string; content: string }>,
+  topic: string = '',
+  fullOutline: string = ''
+): Promise<{
+  success: boolean
+  pages: Array<{
+    index: number
+    type: string
+    content: string
+    image?: string
+    status: 'done' | 'error' | 'pending'
+    error?: string
+  }>
+  stats: {
+    total: number
+    success: number
+    failed: number
+  }
+}> {
+  const response = await api.post('/generate-batch-images', {
+    pages,
+    topic,
+    full_outline: fullOutline
+  })
+  return response.data
 }
 
 // 搜索小红书内容
@@ -196,24 +256,6 @@ export async function autoGenerateContent(
 }> {
   const response = await api.post('/auto-generate', null, {
     params: { topic, goals, audience, reference_count: referenceCount }
-  })
-  return response.data
-}
-
-// AI 生成原创图片
-export async function generateImage(
-  prompt: string,
-  style: string = '小红书风格',
-  aspectRatio: string = '1:1'
-): Promise<{
-  success: boolean
-  image?: string
-  error?: string
-}> {
-  const response = await api.post('/generate-image', {
-    prompt,
-    style,
-    aspect_ratio: aspectRatio
   })
   return response.data
 }
@@ -705,5 +747,185 @@ export async function getReferenceContent(
   const response = await api.get('/history/reference', {
     params: { topic, max_count: maxCount }
   })
+  return response.data
+}
+
+
+// ==================== 多源内容生成 API ====================
+
+export interface MultiSourceGenerateRequest {
+  topic: string
+  goals?: string[]
+  audience?: string
+  user_materials?: string
+  use_xhs_samples?: boolean
+  use_web_search?: boolean
+  use_material_library?: boolean
+  humanize?: boolean
+}
+
+export interface MultiSourceGenerateResponse {
+  content: ContentItem
+  sources_used: {
+    xhs_samples: number
+    web_knowledge: boolean
+    material_texts: number
+    user_materials: boolean
+  }
+  calibration: {
+    avg_title_length: number
+    common_patterns: string[]
+    emoji_rate: number
+    common_tags: string[]
+  }
+}
+
+export async function generateMultiSource(
+  request: MultiSourceGenerateRequest
+): Promise<MultiSourceGenerateResponse> {
+  const response = await api.post('/generate-multi-source', request)
+  return response.data
+}
+
+
+// ==================== 话题研究 API ====================
+
+export interface TopicResearch {
+  topic_summary: string
+  key_knowledge: string[]
+  common_questions: string[]
+  hot_angles: string[]
+  search_sources?: string[]
+}
+
+export async function researchTopic(topic: string): Promise<{
+  topic: string
+  research: TopicResearch
+}> {
+  const response = await api.get('/research/topic', {
+    params: { topic }
+  })
+  return response.data
+}
+
+
+// ==================== 视频素材 API ====================
+
+export interface MaterialVideo {
+  id: string
+  type: 'video'
+  video_url: string
+  thumbnail: string
+  filename: string
+  tags: string[]
+  description: string
+  source: string
+  duration: number
+  created_at: string
+  used_count: number
+  xhs_note_id?: string
+}
+
+export async function addMaterialVideo(
+  videoUrl: string,
+  options?: {
+    thumbnail?: string
+    filename?: string
+    tags?: string[]
+    description?: string
+    duration?: number
+  }
+): Promise<{ success: boolean; material: MaterialVideo }> {
+  const response = await api.post('/materials/videos', {
+    video_url: videoUrl,
+    thumbnail: options?.thumbnail || '',
+    filename: options?.filename || '',
+    tags: options?.tags || [],
+    description: options?.description || '',
+    duration: options?.duration || 0
+  })
+  return response.data
+}
+
+export async function getMaterialVideos(
+  tags?: string[],
+  limit: number = 20,
+  offset: number = 0
+): Promise<{ videos: MaterialVideo[]; total: number }> {
+  const response = await api.get('/materials/videos', {
+    params: { tags: tags?.join(','), limit, offset }
+  })
+  return response.data
+}
+
+export async function deleteMaterialVideo(materialId: string): Promise<{ success: boolean }> {
+  const response = await api.delete(`/materials/videos/${materialId}`)
+  return response.data
+}
+
+
+// ==================== 小红书素材采集 API ====================
+
+export interface CollectFromXhsRequest {
+  note_id: string
+  collect_images?: boolean
+  collect_video?: boolean
+  auto_tags?: string[]
+}
+
+export interface CollectedMaterials {
+  images: MaterialImage[]
+  video?: MaterialVideo
+  text?: MaterialText
+}
+
+export async function collectMaterialsFromXhs(
+  request: CollectFromXhsRequest
+): Promise<{
+  success: boolean
+  collected: {
+    images: number
+    video: boolean
+    text: boolean
+  }
+  materials: CollectedMaterials
+}> {
+  const response = await api.post('/materials/collect-xhs', request)
+  return response.data
+}
+
+
+// ==================== 智能素材推荐 API ====================
+
+export interface MaterialRecommendation {
+  material: MaterialImage | MaterialVideo | MaterialText
+  score: number
+  reason: string
+}
+
+export async function recommendMaterials(
+  topic: string,
+  contentType: 'image' | 'video' | 'text' = 'image',
+  limit: number = 5
+): Promise<{ recommendations: MaterialRecommendation[]; topic: string }> {
+  const response = await api.get('/materials/recommend', {
+    params: { topic, content_type: contentType, limit }
+  })
+  return response.data
+}
+
+
+// ==================== 增强版素材统计 ====================
+
+export async function getMaterialStatsEnhanced(): Promise<{
+  total_images: number
+  total_texts: number
+  total_videos: number
+  total_collections: number
+  tags: string[]
+  text_types: Record<string, number>
+  sources: Record<string, number>
+}> {
+  const response = await api.get('/materials/stats')
   return response.data
 }

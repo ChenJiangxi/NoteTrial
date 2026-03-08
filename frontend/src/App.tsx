@@ -1,17 +1,20 @@
-﻿import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { 
   Zap, Send, Loader2, Sparkles, Play, Image as ImageIcon, Wand2,
-  Share2, Paperclip, X, FileText, Upload, Plus, Search,
-  Layout, Smartphone, ChevronRight, UserCircle2, BarChart3, GripVertical, Home
+  Paperclip, X, FileText, Upload, Plus,
+  Layout, Smartphone, ChevronRight, UserCircle2, BarChart3, GripVertical, Home,
+  ChevronLeft, ListPlus
 } from 'lucide-react'
 import { useApp } from './contexts/AppContext'
-import { healthCheck, sendChatMessage, generateVariant, startCrowdTest, getCrowdTestProgress, publishContent, searchImages } from './services/api'
-import type { ContentItem, MultiCrowdTestResult } from './types/api'
+import { healthCheck, sendChatMessage, generateVariant, startCrowdTest, getCrowdTestProgress, publishContent, generateImage, generateOutline } from './services/api'
+import type { ContentItem, CrowdTestResult, PageImage } from './types/api'
 import WelcomePage from './components/WelcomePage'
 import AutoModePage from './components/AutoModePage'
 
+// 应用模式类型
 type AppMode = 'welcome' | 'interactive' | 'auto'
 
+// 分隔条组件
 function Resizer({ onDrag, side }: { onDrag: (delta: number) => void; side: 'left' | 'right' }) {
   const [isDragging, setIsDragging] = useState(false)
   const startX = useRef(0)
@@ -30,6 +33,7 @@ function Resizer({ onDrag, side }: { onDrag: (delta: number) => void; side: 'lef
     const handleMouseMove = (e: MouseEvent) => {
       const delta = e.clientX - startX.current
       startX.current = e.clientX
+      // 左侧分隔条向右拖动增加宽度，右侧分隔条向左拖动增加宽度
       onDrag(side === 'left' ? delta : -delta)
     }
     
@@ -59,7 +63,7 @@ function Resizer({ onDrag, side }: { onDrag: (delta: number) => void; side: 'lef
         <GripVertical className="w-4 h-4 text-slate-400" />
       </div>
     </div>
-           )
+  )
 }
 
 function App() {
@@ -68,31 +72,32 @@ function App() {
     setTaskSpec, setContentA, setContentB, addMessage, setMessages,
   } = useApp()
   
+  // 应用模式状态
   const [appMode, setAppMode] = useState<AppMode>('welcome')
   
   const [isConnected, setIsConnected] = useState(false)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isGeneratingB, setIsGeneratingB] = useState(false)
-  const [testResult, setTestResult] = useState<MultiCrowdTestResult | null>(null)
+  const [testResult, setTestResult] = useState<CrowdTestResult | null>(null)
   const [isRunningTest, setIsRunningTest] = useState(false)
   const [simulationProgress, setSimulationProgress] = useState(0)
   const [isPublishing, setIsPublishing] = useState(false)
-  const audiencePresets = ['核心用户', '泛兴趣用户', '实用流', '互动流', '传播流']
+  const audiencePresets = ['核心用户', '泛兴趣用户', '实用派', '互动派', '传播派']
   const [selectedAudienceTags, setSelectedAudienceTags] = useState<string[]>(audiencePresets)
   const [customAudienceInput, setCustomAudienceInput] = useState('')
   const [customAudienceTags, setCustomAudienceTags] = useState<string[]>([])
-  const [selectedTestVersions, setSelectedTestVersions] = useState<string[]>(['Version A', 'Version B'])
-  const [uploadedFile, setUploadedFile] = useState<{ name: string; content: string } | null>(null)
-  const [extraVersions, setExtraVersions] = useState<Array<{ id: string; label: string; content: ContentItem; baseVersionLabel: string }>>([])
+  const [uploadedFile, setUploadedFile] = useState<{ name: string; content: string; type?: string } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   
+  // 三栏宽度状态
   const [leftWidth, setLeftWidth] = useState(384) // 默认 384px (w-96)
   const [rightWidth, setRightWidth] = useState(384)
   const MIN_WIDTH = 280
   const MAX_WIDTH = 600
   
+  // 拖拽处理
   const handleLeftResize = useCallback((delta: number) => {
     setLeftWidth(w => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, w + delta)))
   }, [])
@@ -101,6 +106,7 @@ function App() {
     setRightWidth(w => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, w + delta)))
   }, [])
 
+  // 检查服务连接
   useEffect(() => {
     const check = async () => {
       try {
@@ -115,16 +121,24 @@ function App() {
     return () => clearInterval(interval)
   }, [])
 
+  // 自动滚动到最新消息
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // 发送消息
   const handleSend = async () => {
     if ((!input.trim() && !uploadedFile) || isLoading) return
     
+    // 构建消息内容
     let messageContent = input.trim()
     if (uploadedFile) {
-      messageContent = `[上传文件: ${uploadedFile.name}]\n\n${uploadedFile.content}\n\n${messageContent}`
+      // 图片文件使用特殊格式，方便解析和显示
+      if (uploadedFile.type?.startsWith('image/')) {
+        messageContent = `[图片文件: ${uploadedFile.name}]\n${uploadedFile.content}\n\n${messageContent}`
+      } else {
+        messageContent = `[上传文件: ${uploadedFile.name}]\n\n${uploadedFile.content}\n\n${messageContent}`
+      }
     }
     
     const userMessage = { role: 'user' as const, content: messageContent }
@@ -138,7 +152,69 @@ function App() {
       addMessage({ role: 'assistant', content: response.message })
       
       if (response.task_spec) setTaskSpec(response.task_spec)
-      if (response.generated_content) setContentA(response.generated_content)
+      if (response.generated_content) {
+        // 根据 action 决定如何更新内容
+        const action = response.action || 'all'
+        
+        if (action === 'text_only') {
+          // 只改文案，保留原来的图片
+          setContentA({
+            ...response.generated_content,
+            cover_image: contentA.cover_image  // 保留原图
+          })
+          addMessage({ role: 'assistant', content: '✨ 文案已更新，图片保持不变~' })
+        } else if (action === 'image_only') {
+          // 只换图片，文案不变
+          const topic = response.task_spec?.topic || contentA.title
+          if (topic) {
+            try {
+              addMessage({ role: 'assistant', content: '🎨 正在为你生成新的封面图...' })
+              const imagePrompt = `${topic}，${contentA.title}，${(contentA.body || '').slice(0, 80)}`
+              const imageUrl = await generateImage(imagePrompt, '小红书风格')
+              setContentA({ ...contentA, cover_image: imageUrl })
+              addMessage({ role: 'assistant', content: '✨ 封面图已更新，文案保持不变~' })
+            } catch (error) {
+              console.error('AI配图生成失败:', error)
+              addMessage({ role: 'assistant', content: '⚠️ 图片生成失败，你可以手动上传封面图。' })
+            }
+          }
+        } else {
+          // action === 'all'，全部重新生成
+          setContentA(response.generated_content)
+          
+          // 自动生成配图
+          if (!response.generated_content.cover_image) {
+            const topic = response.task_spec?.topic || response.generated_content.title
+            if (topic) {
+              try {
+                console.log('正在使用 AI 为内容生成封面图...')
+                addMessage({ role: 'assistant', content: '🎨 正在为你生成专属封面图...' })
+                const imagePrompt = `${topic}，${response.generated_content.title}，${(response.generated_content.body || '').slice(0, 80)}`
+                const imageUrl = await generateImage(imagePrompt, '小红书风格')
+                console.log('AI配图生成成功')
+                setContentA({ ...response.generated_content, cover_image: imageUrl })
+                addMessage({ role: 'assistant', content: '✨ 已为你生成专属封面图，你也可以更换其他图片。' })
+              } catch (error) {
+                console.error('AI配图生成失败:', error)
+                addMessage({ role: 'assistant', content: '⚠️ 图片生成失败，你可以手动上传封面图。' })
+              }
+            }
+          }
+        }
+      } else if (response.action === 'image_only' && contentA.title) {
+        // 没有返回 generated_content 但意图是换图
+        const topic = response.task_spec?.topic || contentA.title
+        try {
+          addMessage({ role: 'assistant', content: '🎨 正在为你生成新的封面图...' })
+          const imagePrompt = `${topic}，${contentA.title}，${(contentA.body || '').slice(0, 80)}`
+          const imageUrl = await generateImage(imagePrompt, '小红书风格')
+          setContentA({ ...contentA, cover_image: imageUrl })
+          addMessage({ role: 'assistant', content: '✨ 封面图已更新~' })
+        } catch (error) {
+          console.error('AI配图生成失败:', error)
+          addMessage({ role: 'assistant', content: '⚠️ 图片生成失败，你可以手动上传封面图。' })
+        }
+      }
     } catch {
       addMessage({ role: 'assistant', content: '抱歉，服务暂时不可用，请稍后重试。' })
     } finally {
@@ -146,161 +222,63 @@ function App() {
     }
   }
 
+  // 处理文件上传 (Chat) - 支持更多文件格式
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     
+    // 支持的文件格式
     const textTypes = ['.txt', '.md', '.json', '.csv', '.xml', '.html', '.css', '.js', '.ts']
     const docTypes = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']
+    const imageTypes = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.heic', '.heif', '.bmp', '.tiff', '.tif']
     const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'))
     
-    const isTextFile = textTypes.includes(ext) || file.type.startsWith('text/')
-    const isDocFile = docTypes.includes(ext)
+    // 优先通过 MIME 类型判断，这样可以支持更多格式
+    const isTextFile = file.type.startsWith('text/') || textTypes.includes(ext)
+    const isDocFile = docTypes.includes(ext) || file.type.includes('pdf') || file.type.includes('document') || file.type.includes('sheet') || file.type.includes('presentation')
+    const isImageFile = file.type.startsWith('image/') || imageTypes.includes(ext)
     
-    if (!isTextFile && !isDocFile) {
-      alert('\u652f\u6301\u7684\u6587\u4ef6\u683c\u5f0f\uff1a\n\u2022 \u6587\u672c\uff1atxt, md, json, csv\n\u2022 \u6587\u6863\uff1apdf, doc, docx, xls, xlsx, ppt, pptx')
+    if (!isTextFile && !isDocFile && !isImageFile) {
+      alert('支持的文件格式：\n• 文本：txt, md, json, csv\n• 文档：pdf, doc, docx, xls, xlsx, ppt, pptx\n• 图片：jpg, png, gif, webp, heic 等所有图片格式')
       return
     }
     
-    const maxSize = isDocFile ? 5 * 1024 * 1024 : 500 * 1024
+    // 图片类文件限制 10MB，文档类文件限制 5MB，文本类限制 500KB
+    const maxSize = isImageFile ? 10 * 1024 * 1024 : isDocFile ? 5 * 1024 * 1024 : 500 * 1024
     if (file.size > maxSize) {
-      alert(`\u6587\u4ef6\u5927\u5c0f\u4e0d\u80fd\u8d85\u8fc7 ${isDocFile ? '5MB' : '500KB'}`)
+      alert(`文件大小不能超过 ${isImageFile ? '10MB' : isDocFile ? '5MB' : '500KB'}`)
       return
     }
     
     if (isDocFile) {
+      // 对于 PDF/Office 文件，只记录文件名（后端需要处理解析）
       setUploadedFile({ 
         name: file.name, 
-        content: `[\u6587\u6863\u6587\u4ef6: ${file.name}]\n\n\u6ce8\u610f\uff1a\u8fd9\u662f\u4e00\u4e2a ${ext.toUpperCase()} \u6587\u4ef6\u3002\u8bf7\u5728\u5bf9\u8bdd\u4e2d\u63cf\u8ff0\u6587\u4ef6\u7684\u4e3b\u8981\u5185\u5bb9\uff0c\u6216\u8005\u5c06\u5173\u952e\u4fe1\u606f\u590d\u5236\u7c98\u8d34\u5230\u8fd9\u91cc\u3002`,
+        content: `[文档文件: ${file.name}]\n\n注意：这是一个 ${ext.toUpperCase()} 文件。请在对话中描述文件的主要内容，或者将关键信息复制粘贴到这里。`,
+        type: file.type
       })
-    } else {
+    } else if (isImageFile) {
+      // 图片文件读取为 DataURL
       const reader = new FileReader()
       reader.onload = (event) => {
         const content = event.target?.result as string
-        setUploadedFile({ name: file.name, content })
+        setUploadedFile({ name: file.name, content, type: file.type })
+      }
+      reader.readAsDataURL(file)
+    } else {
+      // 文本文件直接读取内容
+      const reader = new FileReader()
+      reader.onload = (event) => {
+        const content = event.target?.result as string
+        setUploadedFile({ name: file.name, content, type: file.type })
       }
       reader.readAsText(file)
     }
     e.target.value = ''
   }
-  const getNextVersionLabel = (existingCount: number) => {
-    return 'Version ' + String.fromCharCode(67 + existingCount)
-  }
-  const getVersionContentByLabel = (label?: string) => {
-    const targetLabel = label && label.trim() ? label : 'Version A'
-    if (targetLabel === 'Version A') return contentA
-    if (targetLabel === 'Version B') return contentB
-    return extraVersions.find(v => v.label === targetLabel)?.content || null
-  }
 
-  const getBaseOptionsForExtra = (currentId: string) => {
-    const options: string[] = ['Version A']
-    if (contentB.title || contentB.body) options.push('Version B')
-    for (const v of extraVersions) {
-      if (v.id !== currentId && (v.content.title || v.content.body)) {
-        options.push(v.label)
-      }
-    }
-    return options
-  }
-
-  const normalizeVersions = (nextContentB: ContentItem, nextExtras: Array<{ id: string; label: string; content: ContentItem; baseVersionLabel: string }>) => {
-    let contentBNext = nextContentB
-    let extrasNext = [...nextExtras]
-
-    if ((!contentBNext.title && !contentBNext.body) && extrasNext.length > 0) {
-      const [first, ...rest] = extrasNext
-      contentBNext = first.content
-      extrasNext = rest
-    }
-
-    const relabeled = extrasNext.map((v, idx) => ({
-      ...v,
-      label: `Version ${String.fromCharCode(67 + idx)}`,
-    }))
-
-    const allowed = new Set(['Version A'])
-    if (contentBNext.title || contentBNext.body) allowed.add('Version B')
-    for (const v of relabeled) allowed.add(v.label)
-
-    const fixed = relabeled.map(v => ({
-      ...v,
-      baseVersionLabel: v.baseVersionLabel && allowed.has(v.baseVersionLabel)
-        ? v.baseVersionLabel
-        : (allowed.has('Version B') ? 'Version B' : 'Version A'),
-    }))
-
-    return { contentB: contentBNext, extras: fixed }
-  }
-
-  const handleDeleteVersionB = () => {
-    const emptyB: ContentItem = { title: '', body: '', cover_image: '', tags: [] }
-    const normalized = normalizeVersions(emptyB, extraVersions)
-    setContentB(normalized.contentB)
-    setExtraVersions(normalized.extras)
-    setTestResult(null)
-  }
-
-  const handleDeleteVersionA = () => {
-    if (!contentB.title && !contentB.body) return
-    const emptyB: ContentItem = { title: '', body: '', cover_image: '', tags: [] }
-    setContentA(contentB)
-    const normalized = normalizeVersions(emptyB, extraVersions)
-    setContentB(normalized.contentB)
-    setExtraVersions(normalized.extras)
-    setTestResult(null)
-  }
-
-  const nonEmptyCount = [
-    contentA,
-    contentB,
-    ...extraVersions.map(v => v.content),
-  ].filter(item => item.title || item.body).length
-  const canDeleteAny = nonEmptyCount > 1
-
-  const handleDeleteExtra = (versionId: string) => {
-    const filtered = extraVersions.filter(v => v.id !== versionId)
-    const normalized = normalizeVersions(contentB, filtered)
-    setContentB(normalized.contentB)
-    setExtraVersions(normalized.extras)
-    setTestResult(null)
-  }
-
-
-  const handleAddVersion = () => {
-    const defaultBase = extraVersions.length > 0
-      ? extraVersions[extraVersions.length - 1].label
-      : (contentB.title ? 'Version B' : 'Version A')
-
-    setExtraVersions(prev => ([
-      ...prev,
-      {
-        id: `v-${Date.now()}-${prev.length}`,
-        label: getNextVersionLabel(prev.length),
-        content: { title: '', body: '', cover_image: '', tags: [] },
-        baseVersionLabel: defaultBase,
-      },
-    ]))
-  }
-
-  const handleStartManualB = () => {
-    if (!contentA.title) return
-    setContentB({ ...contentA })
-    setTestResult(null)
-  }
-
-  const withKeywordTags = (content: ContentItem, keywords: string[]) => {
-    if (!keywords.length) return content
-    const existing = content.tags ?? []
-    const merged = [...existing]
-    for (const keyword of keywords) {
-      const clean = keyword.trim()
-      if (clean && !merged.includes(clean)) merged.push(clean)
-    }
-    return { ...content, tags: merged }
-  }
-
-  const handleGenerateBWithKeywords = async (keywords: string[]) => {
+  // 生成版本B
+  const handleGenerateB = async () => {
     if (!taskSpec || !contentA.title) return
     setIsGeneratingB(true)
     try {
@@ -308,113 +286,18 @@ function App() {
         task_spec: taskSpec,
         base_content: contentA,
         variant_type: 'alternative',
-        mcp_keywords: keywords,
       })
-      setContentB(withKeywordTags(variant, keywords))
-      setTestResult(null)
+      setContentB(variant)
     } catch (error) {
-      console.error('Generate Version B with MCP failed:', error)
-    } finally {
-      setIsGeneratingB(false)
-    }
-  }
-  const handleStartManualExtra = (versionId: string, baseVersionLabel?: string) => {
-    const baseLabel = baseVersionLabel || 'Version A'
-    const baseContent = getVersionContentByLabel(baseLabel)
-    if (!baseContent) return
-
-    setExtraVersions(prev => prev.map(v =>
-      v.id === versionId
-        ? { ...v, content: { ...baseContent }, baseVersionLabel: baseLabel }
-        : v
-    ))
-    setTestResult(null)
-  }
-
-  const handleGenerateExtraWithKeywords = async (versionId: string, keywords: string[], baseVersionLabel?: string) => {
-    if (!taskSpec) return
-    const baseLabel = baseVersionLabel || 'Version A'
-    const baseContent = getVersionContentByLabel(baseLabel)
-    if (!baseContent || !baseContent.title) return
-
-    setIsGeneratingB(true)
-    try {
-      const variant = await generateVariant({
-        task_spec: taskSpec,
-        base_content: baseContent,
-        variant_type: 'alternative',
-        mcp_keywords: keywords,
-      })
-
-      setExtraVersions(prev => prev.map(v =>
-        v.id === versionId
-          ? { ...v, content: withKeywordTags(variant, keywords), baseVersionLabel: baseLabel }
-          : v
-      ))
-      setTestResult(null)
-    } catch (error) {
-      console.error('Generate extra version failed:', error)
+      console.error('生成变体失败:', error)
     } finally {
       setIsGeneratingB(false)
     }
   }
 
-  const mcpKeywordPlaceholder = (() => {
-    const broadKeywords = new Set([
-      '\u62a4\u80a4', '\u7f8e\u98df', '\u65c5\u6e38', '\u526f\u4e1a', '\u5065\u8eab', '\u7a7f\u642d', '\u5b66\u4e60', '\u804c\u573a', '\u7406\u8d22', '\u60c5\u611f', '\u6444\u5f71',
-    ])
-
-    const seeds: string[] = []
-    if (taskSpec?.topic?.trim()) seeds.push(taskSpec.topic.trim())
-    if (contentA.tags?.length) seeds.push(...contentA.tags.slice(0, 3))
-    if (taskSpec?.audience?.trim()) {
-      const firstAudience = taskSpec.audience.split(/[\/,\s]+/)[0]?.trim()
-      if (firstAudience) seeds.push(firstAudience)
-    }
-
-    const refined = Array.from(
-      new Set(
-        seeds
-          .map(s => s.replace(/^#/, '').trim())
-          .filter(Boolean),
-      ),
-    )
-
-    const specific = refined.filter(s => s.length >= 3 && s.length <= 10 && !broadKeywords.has(s))
-
-    let sample = specific[0] || ''
-    if (!sample && refined.length >= 2) sample = `${refined[0]}${refined[1]}`
-    if (!sample && refined.length >= 1) sample = refined[0]
-
-    if (sample.length > 12) sample = sample.slice(0, 12)
-
-    const placeholder = sample ? `\u5982\uff1a${sample}` : ''
-    return Array.from(placeholder).slice(0, 15).join('')
-  })()
-
-  const testVersionOptions = [
-    { label: 'Version A', content: contentA },
-    { label: 'Version B', content: contentB },
-    ...extraVersions.map(v => ({ label: v.label, content: v.content })),
-  ]
-  const hasContent = (item: ContentItem) => Boolean(item.title || item.body)
-  const selectedVersionItems = testVersionOptions.filter(option => selectedTestVersions.includes(option.label))
-  const canRunTest = selectedTestVersions.length >= 2 && selectedVersionItems.every(option => hasContent(option.content))
-
-  const toggleTestVersion = (label: string) => {
-    setSelectedTestVersions(prev => (
-      prev.includes(label) ? prev.filter(v => v !== label) : [...prev, label]
-    ))
-  }
-
+  // 运行测试
   const handleRunTest = async () => {
-    if (!taskSpec) return
-    if (selectedTestVersions.length < 2) {
-      alert('请至少选择两个版本进行对比测试')
-      return
-    }
-    const selectedVersions = selectedVersionItems
-    if (selectedVersions.some(option => !option.content?.title)) return
+    if (!taskSpec || !contentA.title || !contentB.title) return
     setIsRunningTest(true)
     setSimulationProgress(0)
     setTestResult(null)
@@ -429,7 +312,8 @@ function App() {
 
       const payload = {
         task_spec: taskSpecForTest,
-        versions: selectedVersions.map(option => ({ label: option.label, content: option.content })),
+        content_a: contentA,
+        content_b: contentB,
         max_users: 20,
         audience_tags: audienceOverrides,
       }
@@ -475,56 +359,55 @@ function App() {
   const removeCustomAudienceTag = (tag: string) => {
     setCustomAudienceTags(prev => prev.filter(t => t !== tag))
   }
-  const handlePublishContent = async (content: ContentItem, versionLabel: string) => {
+
+  // 发布
+  const handlePublish = async (version: 'A' | 'B') => {
+    const content = version === 'A' ? contentA : contentB
     if (!content.title || !content.body) {
-      alert('请完善版本标题和正文')
+      alert('请先填写标题和正文')
       return
     }
     if (!content.cover_image) {
-      alert('\u8bf7\u5148\u6dfb\u52a0\u5c01\u9762\u56fe\u7247')
+      alert('请先添加封面图片')
       return
     }
-    if (!confirm(`\u786e\u5b9a\u8981\u53d1\u5e03 ${versionLabel} \u5417\uff1f`)) return
-
+    if (!confirm(`确定要发布版本 ${version} 吗？`)) return
+    
     setIsPublishing(true)
     try {
       const result = await publishContent(content)
       if (result.success) {
-        alert('\u53d1\u5e03\u6210\u529f')
+        alert('🎉 发布成功！')
       } else {
-        alert(`\u53d1\u5e03\u5931\u8d25: ${result.message}`)
+        alert(`发布失败: ${result.message}`)
       }
     } catch (error: any) {
-      alert(`\u53d1\u5e03\u5931\u8d25: ${error.message}`)
+      alert(`发布失败: ${error.message}`)
     } finally {
       setIsPublishing(false)
     }
   }
 
-  const handlePublish = async (version: 'A' | 'B') => {
-    const content = version === 'A' ? contentA : contentB
-    await handlePublishContent(content, `Version ${version}`)
-  }
-
   const handleReset = () => {
-    setMessages([{ role: 'assistant', content: '👋 你好！我是 NoteTrial 助手。\n\n告诉我想测试什么内容，例如：\n“程序员副业指南”\n“美食探店文案”\n“护肤品种草”\n\n你可以上传产品资料，我会帮你生成更准确的内容。' }])
+    setMessages([{ role: 'assistant', content: '👋 你好！我是 NoteTrial 助手。\n\n告诉我想测试什么内容，例如：\n• 程序员副业指南\n• 美食探店文案\n• 护肤品种草\n\n你可以上传产品资料，我会帮你生成更准确的内容。' }])
     setContentA({ title: '', body: '', tags: [] })
     setContentB({ title: '', body: '', tags: [] })
     setTaskSpec(null)
     setTestResult(null)
-    setExtraVersions([])
-    setSelectedTestVersions(['Version A', 'Version B'])
   }
 
+  // 处理模式选择
   const handleModeSelect = (mode: 'interactive' | 'auto') => {
     setAppMode(mode)
   }
 
+  // 返回欢迎页
   const handleBackToWelcome = () => {
     setAppMode('welcome')
     handleReset()
   }
 
+  // 根据模式渲染不同页面
   if (appMode === 'welcome') {
     return <WelcomePage onSelectMode={handleModeSelect} />
   }
@@ -533,8 +416,10 @@ function App() {
     return <AutoModePage onBack={handleBackToWelcome} />
   }
 
+  // 人机交互模式 - 原有界面
   return (
     <div className="h-screen flex flex-col bg-slate-50 font-sans text-slate-900">
+      {/* 顶栏 - 专业风格 */}
       <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between flex-shrink-0 shadow-sm z-10 w-full">
         <div className="flex items-center gap-3">
           <button 
@@ -566,8 +451,10 @@ function App() {
         </div>
       </header>
 
+      {/* 主内容 - 三栏布局 (Chat | Editor | Test) */}
       <main className="flex-1 flex min-h-0 overflow-hidden">
         
+        {/* 左栏：AI 助手 (Chat) - 可拖拽 */}
         <div 
           className="border-r border-slate-200 bg-white flex flex-col" 
           style={{ width: leftWidth, flexShrink: 0, flexGrow: 0 }}
@@ -579,11 +466,18 @@ function App() {
           
           <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/30 scrollbar-thin scrollbar-thumb-slate-200">
             {messages.map((msg, idx) => {
+              // 解析消息，检查是否包含文件附件 - 使用更宽松的匹配
               const fileMatch = msg.content.match(/^\[上传文件: (.+?)\]\n\n/)
+              const imageMatch = msg.content.match(/^\[图片文件: (.+?)\]\n(data:image\/[^;]+;base64,[^\n]+)/)
               const hasFile = msg.role === 'user' && fileMatch
+              const hasImage = msg.role === 'user' && imageMatch
               const fileName = hasFile ? fileMatch[1] : null
+              const imageName = hasImage ? imageMatch[1] : null
+              const imageData = hasImage ? imageMatch[2] : null
+              // 提取用户实际输入的文字（文件内容之后的部分）
               let userText = msg.content
-              if (hasFile) {
+              if (hasFile || hasImage) {
+                // 找到文件内容后的用户文字（最后一个\n\n之后的内容）
                 const parts = msg.content.split('\n\n')
                 userText = parts.length > 2 ? parts[parts.length - 1] : ''
               }
@@ -591,7 +485,19 @@ function App() {
               return (
                 <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className="max-w-[90%] space-y-2">
-                    {hasFile && fileName && (
+                    {/* 图片附件 - 独立显示 */}
+                    {hasImage && imageName && imageData && (
+                      <div className="flex justify-end">
+                        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                          <img src={imageData} alt={imageName} className="max-w-[300px] max-h-[300px] object-contain" />
+                          <div className="px-3 py-2 border-t border-slate-100">
+                            <span className="text-xs text-slate-500">{imageName}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {/* 文件附件卡片 - 独立显示在消息上方 */}
+                    {hasFile && fileName && !hasImage && (
                       <div className="flex justify-end">
                         <div className="flex items-center gap-3 px-4 py-3 bg-white rounded-xl border border-slate-200 shadow-sm">
                           <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
@@ -604,6 +510,7 @@ function App() {
                         </div>
                       </div>
                     )}
+                    {/* 消息内容 */}
                     {userText.trim() && (
                       <div 
                         className={`rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
@@ -632,13 +539,23 @@ function App() {
           
           <div className="p-4 border-t border-slate-200 bg-white">
             {uploadedFile && (
-              <div className="mb-3 flex items-center gap-3 px-4 py-3 bg-white border border-slate-200 rounded-xl shadow-sm">
-                <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <FileText className="w-5 h-5 text-blue-500" />
-                </div>
+              <div className="mb-3 flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-blue-50 to-white border border-blue-200 rounded-xl shadow-sm">
+                {uploadedFile.type?.startsWith('image/') ? (
+                  <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 border border-blue-200">
+                    <img src={uploadedFile.content} alt={uploadedFile.name} className="w-full h-full object-cover" />
+                  </div>
+                ) : (
+                  <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <FileText className="w-5 h-5 text-blue-500" />
+                  </div>
+                )}
                 <div className="flex-1 min-w-0">
                   <span className="block text-sm font-medium text-slate-700 truncate">{uploadedFile.name}</span>
-                  <span className="text-xs text-slate-400">准备发送</span>
+                  <span className="text-xs text-blue-500">
+                    {uploadedFile.type?.startsWith('image/') 
+                      ? '📷 AI 将识别图片内容，可在下方输入文字一起发送' 
+                      : '📎 可在下方输入文字一起发送'}
+                  </span>
                 </div>
                 <button onClick={() => setUploadedFile(null)} className="text-slate-400 hover:text-slate-700 p-1">
                   <X className="w-4 h-4" />
@@ -647,7 +564,7 @@ function App() {
             )}
             
             <div className="flex gap-2 items-end">
-              <input ref={fileInputRef} type="file" accept=".txt,.md,.json,.csv,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,text/*" onChange={handleFileUpload} className="hidden" />
+              <input ref={fileInputRef} type="file" accept="image/*,text/*,.txt,.md,.json,.csv,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={handleFileUpload} className="hidden" />
               <button 
                 onClick={() => fileInputRef.current?.click()}
                 className="mb-1 p-2 text-slate-400 hover:text-[#ff2442] hover:bg-slate-100 rounded-xl transition-all border border-transparent hover:border-slate-200"
@@ -657,23 +574,30 @@ function App() {
               </button>
               
               <div className="flex-1 relative">
-                <input
-                  type="text"
+                <textarea
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={(e) => {
+                    setInput(e.target.value)
+                    // 自动调整高度
+                    e.target.style.height = 'auto'
+                    e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px'
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
                       handleSend()
                     }
                   }}
-                  placeholder="输入消息，回车发送..."
-                  className="w-full pl-4 pr-12 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442] focus:bg-white transition-all"
+                  placeholder="输入消息，回车发送，Shift+回车换行..."
+                  rows={1}
+                  className="w-full pl-4 pr-12 py-3 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442] focus:bg-white transition-all resize-none overflow-y-auto leading-relaxed"
+                  style={{ maxHeight: '150px' }}
                 />
+                {/* 发送按钮：绝对定位 + 底部对齐 */}
                 <button
                   onClick={handleSend}
                   disabled={(!input.trim() && !uploadedFile) || isLoading}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-[#ff2442] hover:bg-red-50 rounded-lg transition-all disabled:opacity-30 flex items-center justify-center"
+                  className="absolute right-2 bottom-2 p-1.5 text-slate-400 hover:text-[#ff2442] hover:bg-red-50 rounded-lg transition-all disabled:opacity-30 flex items-center justify-center"
                 >
                   <Send className="w-4 h-4" />
                 </button>
@@ -682,8 +606,10 @@ function App() {
           </div>
         </div>
         
+        {/* 左侧分隔条 */}
         <Resizer onDrag={handleLeftResize} side="left" />
 
+        {/* 中栏：Split Editor (A/B) - 专业编辑器风格 */}
         <div className="flex-1 flex flex-col min-w-0 bg-slate-100/50">
           <div className="h-14 px-6 border-b border-slate-200 bg-white flex items-center justify-between shadow-sm flex-shrink-0">
             <div className="flex items-center gap-2">
@@ -700,21 +626,12 @@ function App() {
             </div>
             
             <div className="flex items-center gap-3">
-              {contentA.title && (
-                <button
-                  onClick={handleAddVersion}
-                  disabled={isGeneratingB}
-                  className="flex items-center gap-2 px-4 py-2 text-xs font-semibold bg-white text-[#ff2442] border border-red-200 rounded-lg hover:bg-red-50 hover:border-red-300 transition-all disabled:opacity-50 shadow-sm"
-                >
-                  {isGeneratingB ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                  {'\u65b0\u589e\u7248\u672c'}
-                </button>
-              )}
+              {/* 暂时隐藏版本B生成按钮 */}
             </div>
           </div>
           
-          <div className="flex-1 overflow-y-auto p-6">
-            <div className="grid gap-6 max-w-7xl mx-auto" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
+          <div className="flex-1 overflow-hidden p-6">
+            <div className="h-full max-w-5xl mx-auto overflow-y-auto">
               <EditorCard
                 version="A"
                 label="Version A"
@@ -722,50 +639,16 @@ function App() {
                 onChange={setContentA}
                 onPublish={() => handlePublish('A')}
                 isPublishing={isPublishing}
-                onDelete={canDeleteAny ? handleDeleteVersionA : undefined}
-                colorTheme="red"
+                colorTheme="blue"
               />
-              <EditorCard
-                version="B"
-                label="Version B"
-                content={contentB}
-                onChange={setContentB}
-                onPublish={() => handlePublish('B')}
-                isPublishing={isPublishing}
-                isEmpty={!contentB.title}
-                onGenerate={handleGenerateBWithKeywords}
-                isGenerating={isGeneratingB}
-                onStartManual={handleStartManualB}
-                mcpKeywordPlaceholder={mcpKeywordPlaceholder}
-                onDelete={canDeleteAny ? handleDeleteVersionB : undefined}
-                colorTheme="red"
-              />
-              {extraVersions.map((versionItem) => (
-                <EditorCard
-                  key={versionItem.id}
-                  version={versionItem.label}
-                  label={versionItem.label}
-                  content={versionItem.content}
-                  onChange={(next) => setExtraVersions(prev => prev.map(v => v.id === versionItem.id ? { ...v, content: next } : v))}
-                  onPublish={() => handlePublishContent(versionItem.content, versionItem.label)}
-                  isPublishing={isPublishing}
-                  isEmpty={!versionItem.content.title}
-                  onGenerate={(keywords, baseVersionLabel) => handleGenerateExtraWithKeywords(versionItem.id, keywords, baseVersionLabel)}
-                  onStartManual={(baseVersionLabel) => handleStartManualExtra(versionItem.id, baseVersionLabel)}
-                  mcpKeywordPlaceholder={mcpKeywordPlaceholder}
-                  baseVersionOptions={getBaseOptionsForExtra(versionItem.id)}
-                  defaultBaseVersion={versionItem.baseVersionLabel}
-                  onDelete={canDeleteAny ? () => handleDeleteExtra(versionItem.id) : undefined}
-                  colorTheme="red"
-                />
-              ))}
             </div>
           </div>
         </div>
         
-        <Resizer onDrag={handleRightResize} side="right" />
+        {/* 暂时隐藏右侧测试面板和分隔条 */}
+        {false && <Resizer onDrag={handleRightResize} side="right" />}
 
-        <div 
+        {false && <div 
           className="border-l border-slate-200 bg-white flex flex-col" 
           style={{ width: rightWidth, flexShrink: 0, flexGrow: 0 }}
         >
@@ -811,7 +694,7 @@ function App() {
                           addCustomAudienceTag()
                         }
                       }}
-                      placeholder="例如：一线城市 25-30 岁职业女性"
+                      placeholder="例如：一线城市25-30岁职业女性"
                       className="flex-1 px-3 py-2 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442]"
                     />
                     <button
@@ -842,36 +725,13 @@ function App() {
                     </div>
                   )}
                 </div>
-                <div className="mb-4">
-                  <p className="text-xs text-slate-500 mb-2">{'\u6d4b\u8bd5\u7248\u672c\uff08\u53ef\u591a\u9009\uff0c\u81f3\u5c11\u9009 2 \u4e2a\uff09'}</p>
-                  <div className="flex flex-wrap gap-2">
-                    {testVersionOptions.map(option => {
-                      const disabled = !hasContent(option.content)
-                      const active = selectedTestVersions.includes(option.label)
-                      return (
-                        <button
-                          key={option.label}
-                          type="button"
-                          onClick={() => !disabled && toggleTestVersion(option.label)}
-                          className={`px-2.5 py-1 text-xs rounded-full border transition-all ${
-                            active
-                              ? 'bg-red-50 border-red-300 text-[#ff2442]'
-                              : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
-                          } ${disabled ? 'opacity-40 cursor-not-allowed hover:border-slate-200' : ''}`}
-                        >
-                          {option.label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
                 <button
                   onClick={handleRunTest}
-                  disabled={!canRunTest || isRunningTest}
+                  disabled={!contentA.title || !contentB.title || isRunningTest}
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#ff2442] text-white text-sm font-medium rounded-lg hover:bg-[#e61f3d] shadow-sm shadow-red-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isRunningTest ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
-                  {isRunningTest ? `模拟测试中 ${simulationProgress}%` : '运行对比测试'}
+                  {isRunningTest ? `模拟测试中 ${simulationProgress}%` : '运行 A/B 测试'}
                 </button>
                 {isRunningTest && (
                   <div className="mt-2 h-2 w-full bg-red-100 rounded-full overflow-hidden">
@@ -896,57 +756,77 @@ function App() {
               )}
             </div>
           </div>
-        </div>
+        </div>}
       </main>
     </div>
   )
 }
 
 // ----------------------------------------------------------------------------
+// 专业编辑器组件 (EditorCard) - 支持多图系列
 // ----------------------------------------------------------------------------
 
 function EditorCard({ 
-  label, content, onChange, onPublish, isPublishing, isEmpty, onGenerate, onStartManual, isGenerating, colorTheme, mcpKeywordPlaceholder, baseVersionOptions, defaultBaseVersion, onDelete
+  label, content, onChange, onPublish, isPublishing, isEmpty, onGenerate, isGenerating, colorTheme
 }: { 
-  version: string
+  version: 'A' | 'B'
   label: string
   content: ContentItem
   onChange: (c: ContentItem) => void
   onPublish: () => void
   isPublishing: boolean
   isEmpty?: boolean
-  onGenerate?: (keywords: string[], baseVersionLabel?: string) => void
-  onStartManual?: (baseVersionLabel?: string) => void
+  onGenerate?: () => void
   isGenerating?: boolean
   colorTheme: 'blue' | 'red'
-  mcpKeywordPlaceholder?: string
-  baseVersionOptions?: string[]
-  defaultBaseVersion?: string
-  onDelete?: () => void
 }) {
   const [activeTab, setActiveTab] = useState<'upload' | 'url' | 'search'>('upload')
   const [showImgMgr, setShowImgMgr] = useState(false)
-  const [mcpKeywordInput, setMcpKeywordInput] = useState('')
-  const [selectedBaseVersion, setSelectedBaseVersion] = useState(defaultBaseVersion || baseVersionOptions?.[0] || 'Version A')
+  const [showImagePreview, setShowImagePreview] = useState(false)
+  const [currentPageIndex, setCurrentPageIndex] = useState(0)
+  const [isGeneratingPage, setIsGeneratingPage] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-
+  
+  // 使用本地状态管理 pages，并与 content.images 同步
+  const defaultPages: PageImage[] = [
+    { index: 0, type: 'cover', content: content.title || '封面', image: content.cover_image, status: content.cover_image ? 'done' : 'pending' }
+  ]
+  const [localPages, setLocalPages] = useState<PageImage[]>(content.images || defaultPages)
+  
+  // 同步外部 content.images 变化到本地状态
   useEffect(() => {
-    if (defaultBaseVersion && defaultBaseVersion !== selectedBaseVersion) {
-      setSelectedBaseVersion(defaultBaseVersion)
+    if (content.images && content.images.length > 0) {
+      setLocalPages(content.images)
     }
-  }, [defaultBaseVersion])
+  }, [content.images])
+  
+  const pages = localPages
+  const currentPage = pages[currentPageIndex] || pages[0]
   
   const theme = {
-    blue: { accent: 'text-blue-500', border: 'focus:border-blue-400', ring: 'focus:ring-blue-100', btn: 'bg-blue-500 hover:bg-blue-600', barColor: 'bg-blue-500', labelBg: 'bg-blue-500', labelText: 'text-white' },
-    red: { accent: 'text-[#ff2442]', border: 'focus:border-[#ff2442]', ring: 'focus:ring-red-100', btn: 'bg-[#ff2442] hover:bg-[#e61f3d]', barColor: 'bg-[#ff2442]', labelBg: 'bg-[#ff2442]', labelText: 'text-white' }
+    blue: { accent: 'text-blue-500', btn: 'bg-blue-500 hover:bg-blue-600', barColor: 'bg-blue-500' },
+    red: { accent: 'text-[#ff2442]', btn: 'bg-[#ff2442] hover:bg-[#e61f3d]', barColor: 'bg-[#ff2442]' }
   }[colorTheme]
+
+  // 同步更新 images 到 content 和本地状态
+  const updatePages = (newPages: PageImage[]) => {
+    setLocalPages(newPages)  // 立即更新本地状态
+    const coverPage = newPages.find(p => p.type === 'cover')
+    onChange({ 
+      ...content, 
+      images: newPages,
+      cover_image: coverPage?.image  // 保持向后兼容
+    })
+  }
 
   const handleLocalUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
     reader.onload = (ev) => {
-      onChange({ ...content, cover_image: ev.target?.result as string })
+      const newPages = [...pages]
+      newPages[currentPageIndex] = { ...currentPage, image: ev.target?.result as string, status: 'done' }
+      updatePages(newPages)
       setShowImgMgr(false)
     }
     reader.readAsDataURL(file)
@@ -961,366 +841,674 @@ function EditorCard({
       }
     }
   }
+
+  // 添加新页面
+  const addPage = () => {
+    const newIndex = pages.length
+    const newPage: PageImage = {
+      index: newIndex,
+      type: 'content',
+      content: `内容页 ${newIndex}`,
+      status: 'pending'
+    }
+    updatePages([...pages, newPage])
+    setCurrentPageIndex(newIndex)
+  }
+
+  // AI 生成大纲（RedInk 风格）
+  const [isGeneratingOutline, setIsGeneratingOutline] = useState(false)
+  const generateOutlineFromTitle = async () => {
+    if (!content.title) {
+      alert('请先输入标题')
+      return
+    }
+    setIsGeneratingOutline(true)
+    try {
+      const result = await generateOutline(content.title, 6, '小红书风格')
+      if (result.success && result.pages) {
+        // 转换为 PageImage 格式
+        const newPages: PageImage[] = result.pages.map((p, idx) => ({
+          index: idx,
+          type: p.type as 'cover' | 'content' | 'summary',
+          content: p.content,
+          status: 'pending' as const
+        }))
+        updatePages(newPages)
+        setCurrentPageIndex(0)
+        // 更新标题
+        if (result.title && result.title !== content.title) {
+          onChange({ ...content, title: result.title, images: newPages })
+        }
+      }
+    } catch (error) {
+      console.error('生成大纲失败:', error)
+    } finally {
+      setIsGeneratingOutline(false)
+    }
+  }
+
+  // 删除页面
+  const removePage = (index: number) => {
+    if (pages.length <= 1) return
+    const newPages = pages.filter((_, i) => i !== index).map((p, i) => ({ ...p, index: i }))
+    updatePages(newPages)
+    if (currentPageIndex >= newPages.length) {
+      setCurrentPageIndex(newPages.length - 1)
+    }
+  }
+
+  // 更新当前页面文案
+  const updatePageContent = (newContent: string) => {
+    const newPages = [...pages]
+    newPages[currentPageIndex] = { ...currentPage, content: newContent }
+    updatePages(newPages)
+  }
+
+  // 生成当前页图片
+  const generateCurrentPageImage = async () => {
+    setIsGeneratingPage(true)
+    try {
+      const prompt = currentPage.content || content.title || '小红书风格图片'
+      const imageUrl = await generateImage(prompt, '小红书风格')
+      const newPages = [...pages]
+      newPages[currentPageIndex] = { ...currentPage, image: imageUrl, status: 'done' }
+      updatePages(newPages)
+    } catch (error) {
+      console.error('生成图片失败:', error)
+      const newPages = [...pages]
+      newPages[currentPageIndex] = { ...currentPage, status: 'error', error: '生成失败' }
+      updatePages(newPages)
+    } finally {
+      setIsGeneratingPage(false)
+    }
+  }
+
+  // 批量生成所有图片（逐个生成并实时更新）
+  const generateAllImages = async () => {
+    setIsGeneratingPage(true)
+    
+    // 使用当前 pages 的副本，并逐步更新
+    let currentPages = [...pages]
+    
+    // 找到封面页索引
+    const coverIdx = currentPages.findIndex(p => p.type === 'cover')
+    
+    // 第一步：先生成封面
+    if (coverIdx >= 0 && !currentPages[coverIdx].image) {
+      const coverPage = currentPages[coverIdx]
+      // 标记封面正在生成
+      currentPages[coverIdx] = { ...coverPage, status: 'generating' }
+      updatePages([...currentPages])
+      
+      try {
+        const coverPrompt = `${content.title}\n\n${coverPage.content}`
+        const coverImage = await generateImage(coverPrompt, '小红书风格')
+        if (coverImage) {
+          currentPages[coverIdx] = { ...coverPage, image: coverImage, status: 'done' }
+          updatePages([...currentPages])
+          console.log('✅ 封面生成成功')
+        } else {
+          currentPages[coverIdx] = { ...coverPage, status: 'error', error: '封面生成失败' }
+          updatePages([...currentPages])
+        }
+      } catch (e) {
+        console.error('封面生成失败:', e)
+        currentPages[coverIdx] = { ...coverPage, status: 'error', error: '封面生成异常' }
+        updatePages([...currentPages])
+      }
+    }
+    
+    // 第二步：逐个生成其他页面
+    for (let i = 0; i < currentPages.length; i++) {
+      if (i === coverIdx) continue  // 跳过已处理的封面
+      
+      const page = currentPages[i]
+      if (page.status === 'done' && page.image) continue  // 跳过已有图片的
+      
+      // 标记正在生成
+      currentPages[i] = { ...page, status: 'generating' }
+      updatePages([...currentPages])
+      setCurrentPageIndex(i)  // 切换到当前正在生成的页面
+      
+      try {
+        const prompt = page.content || `内容页 ${i + 1}`
+        const imageUrl = await generateImage(prompt, '小红书风格')
+        
+        if (imageUrl) {
+          currentPages[i] = { ...page, image: imageUrl, status: 'done' }
+          console.log(`✅ 第 ${i + 1} 页生成成功`)
+        } else {
+          currentPages[i] = { ...page, status: 'error', error: '生成失败' }
+        }
+        updatePages([...currentPages])
+      } catch (e) {
+        console.error(`第 ${i + 1} 页生成失败:`, e)
+        currentPages[i] = { ...page, status: 'error', error: '生成异常' }
+        updatePages([...currentPages])
+      }
+    }
+    
+    setIsGeneratingPage(false)
+    const successCount = currentPages.filter(p => p.status === 'done').length
+    console.log(`批量生成完成: ${successCount}/${currentPages.length} 成功`)
+  }
+
   if (isEmpty && onGenerate) {
-    const rawKeywordInput = mcpKeywordInput.trim()
-    const keywords = !rawKeywordInput
-      ? []
-      : /[,;\/\s]+/.test(rawKeywordInput)
-        ? rawKeywordInput
-            .split(/[,;\/\s]+/)
-            .map(k => k.trim())
-            .filter(Boolean)
-        : [rawKeywordInput]
-
     return (
-      <div className="min-h-[640px] rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center gap-4 px-6 transition-all hover:border-slate-300 hover:bg-slate-100 relative">
-        {onDelete && (
-          <button
-            onClick={onDelete}
-            className="absolute right-3 top-3 z-10 w-7 h-7 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-200 shadow-sm flex items-center justify-center"
-            title="\u5220\u9664\u7248\u672c"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
-        <div className="w-16 h-16 rounded-full bg-white shadow-sm flex items-center justify-center">
-          <Wand2 className={`w-8 h-8 ${theme.accent}`} />
-        </div>
-        <div className="text-center">
-          <h3 className="font-semibold text-slate-700">{`${label} \u4e3a\u7a7a`}</h3>
-          <p className="text-sm text-slate-500 mt-1">
-            {'\u53ef\u9009\u62e9\u624b\u52a8\u6539\u5199\uff0c\u6216\u8f93\u5165\u5173\u952e\u8bcd\u6821\u51c6\u751f\u6210\u3002'}
-          </p>
-        </div>
-
-        <div className="w-full max-w-md space-y-3">
-          {baseVersionOptions && baseVersionOptions.length > 0 && (
-            <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
-              <p className="text-xs text-slate-500">{'\u57fa\u4e8e\u7248\u672c'}</p>
-              <select
-                value={selectedBaseVersion}
-                onChange={(e) => setSelectedBaseVersion(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442] bg-white"
-              >
-                {baseVersionOptions.map((option) => (
-                  <option key={option} value={option}>{option}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          <button
-            onClick={() => onStartManual?.(selectedBaseVersion)}
-            disabled={!onStartManual}
-            className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
-          >
-            {'\u624b\u52a8\u6539\u5199'}
-          </button>
-
-          <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
-            <p className="text-xs text-slate-500">{'\u5173\u952e\u8bcd\uff1a'}</p>
-            <input
-              value={mcpKeywordInput}
-              onChange={(e) => setMcpKeywordInput(e.target.value)}
-              placeholder={mcpKeywordPlaceholder}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-[#ff2442]"
-            />
-            <button
-              onClick={() => onGenerate(keywords, selectedBaseVersion)}
-              disabled={isGenerating || keywords.length === 0}
-              className={`w-full px-4 py-2.5 rounded-lg text-white text-sm font-medium transition-all ${theme.btn} disabled:opacity-60`}
-            >
-              {isGenerating ? '\u6821\u51c6\u751f\u6210\u4e2d...' : `\u6821\u51c6\u751f\u6210${label}`}
-            </button>
-          </div>
-        </div>
+      <div className="h-full rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center gap-4">
+        <Wand2 className={`w-8 h-8 ${theme.accent}`} />
+        <button onClick={onGenerate} disabled={isGenerating} className={`px-6 py-2.5 rounded-lg text-white font-medium text-sm ${theme.btn} disabled:opacity-70`}>
+          {isGenerating ? 'AI 正在生成内容...' : '一键生成版本 B'}
+        </button>
       </div>
     )
   }
 
   return (
-    <div className="min-h-[640px] bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden relative group">
-      {onDelete && (
-        <button
-          onClick={onDelete}
-          className="absolute right-3 top-3 z-10 w-7 h-7 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-200 shadow-sm flex items-center justify-center"
-          title="\u5220\u9664\u7248\u672c"
+    <>
+      {/* 图片全屏预览弹窗 */}
+      {showImagePreview && currentPage.image && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center cursor-zoom-out backdrop-blur-sm"
+          onClick={() => setShowImagePreview(false)}
         >
-          <X className="w-4 h-4" />
-        </button>
+          <img 
+            src={currentPage.image} 
+            alt="预览" 
+            className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button 
+            onClick={() => setShowImagePreview(false)}
+            className="absolute top-6 right-6 text-white/80 hover:text-white bg-black/50 rounded-full p-2"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          {/* 预览时的页面导航 */}
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/50 rounded-full px-4 py-2 backdrop-blur-sm">
+            <button 
+              onClick={(e) => { e.stopPropagation(); setCurrentPageIndex(Math.max(0, currentPageIndex - 1)) }}
+              disabled={currentPageIndex === 0}
+              className="text-white disabled:opacity-30"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <span className="text-white text-sm">{currentPageIndex + 1} / {pages.length}</span>
+            <button 
+              onClick={(e) => { e.stopPropagation(); setCurrentPageIndex(Math.min(pages.length - 1, currentPageIndex + 1)) }}
+              disabled={currentPageIndex === pages.length - 1}
+              className="text-white disabled:opacity-30"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
       )}
-      <div className={`h-1 absolute top-0 left-0 right-0 ${theme.barColor}`} />
-      
-      <div className="flex-1 flex flex-col overflow-y-auto">
-        <div className="relative w-full bg-slate-100 border-b border-slate-100 group-image flex-shrink-0" style={{ aspectRatio: '3/4', maxHeight: '280px' }}>
-          {content.cover_image ? (
-            <>
-              <img src={content.cover_image} alt="Cover" className="w-full h-full object-contain bg-slate-50" />
-              <button 
-                onClick={() => setShowImgMgr(!showImgMgr)}
-                className="absolute bottom-3 right-3 bg-black/70 text-white text-xs px-3 py-1.5 rounded-full hover:bg-black transition-colors backdrop-blur-sm"
+
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        {/* 顶部色条 */}
+        <div className={`h-1 ${theme.barColor}`} />
+        
+        {/* 分栏主体 */}
+        <div className="flex min-h-[520px]">
+          
+          {/* 左侧：页面缩略图列表 */}
+          <div className="w-[100px] flex-shrink-0 border-r border-slate-100 bg-slate-50/80 flex flex-col">
+            <div className="p-2 border-b border-slate-100">
+              <span className="text-[10px] font-medium text-slate-400 uppercase">页面</span>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-2">
+              {pages.map((page, idx) => (
+                <div 
+                  key={idx}
+                  onClick={() => setCurrentPageIndex(idx)}
+                  className={`relative group cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${
+                    currentPageIndex === idx
+                      ? 'border-blue-500 shadow-md'
+                      : 'border-transparent hover:border-slate-300'
+                  }`}
+                >
+                  {/* 缩略图 */}
+                  <div className="aspect-[3/4] bg-slate-100 flex items-center justify-center">
+                    {page.image ? (
+                      <img src={page.image} alt={`第${idx + 1}页`} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="text-center">
+                        {page.status === 'generating' ? (
+                          <Loader2 className="w-4 h-4 text-slate-400 animate-spin mx-auto" />
+                        ) : (
+                          <ImageIcon className="w-4 h-4 text-slate-300 mx-auto" />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {/* 页码标签 */}
+                  <div className="absolute bottom-1 left-1 bg-black/60 text-white text-[9px] px-1.5 py-0.5 rounded">
+                    {idx === 0 ? '封面' : idx}
+                  </div>
+                  {/* 删除按钮 */}
+                  {pages.length > 1 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); removePage(idx) }}
+                      className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {/* 添加页面按钮 */}
+            <div className="p-2 border-t border-slate-100 space-y-1.5">
+              <button
+                onClick={addPage}
+                className="w-full py-1.5 rounded-lg border border-slate-200 text-slate-400 hover:border-blue-400 hover:text-blue-500 transition-all flex items-center justify-center gap-1 text-[10px]"
               >
-                更换图片
+                <Plus className="w-3 h-3" />
+                添加页
               </button>
-            </>
-          ) : (
-             <div 
-              onClick={() => setShowImgMgr(true)}
-              className="w-full h-full flex flex-col items-center justify-center cursor-pointer hover:bg-slate-200/50 transition-colors gap-3"
-             >
-               <div className="w-12 h-12 rounded-full bg-white shadow-sm flex items-center justify-center text-slate-400">
-                 <ImageIcon className="w-6 h-6" />
-               </div>
-              <span className="text-sm font-medium text-slate-500">上传封面图</span>
-             </div>
-          )}
-
-          {showImgMgr && (
-            <div className="absolute inset-0 bg-white/95 backdrop-blur-md z-20 flex flex-col p-4 animate-in fade-in zoom-in duration-200">
-              <div className="flex justify-between items-center mb-4">
-                <span className="font-semibold text-slate-700 text-sm">图片管理</span>
-                <button onClick={() => setShowImgMgr(false)}><X className="w-4 h-4 text-slate-400" /></button>
-              </div>
-              
-              <div className="flex gap-2 mb-4 p-1 bg-slate-100 rounded-lg">
-                {(['upload', 'url', 'search'] as const).map(t => (
-                  <button 
-                    key={t}
-                    onClick={() => setActiveTab(t)}
-                    className={`flex-1 py-1.5 text-xs font-medium rounded-md capitalize ${activeTab === t ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                  >
-                    {t === 'upload' ? '本地上传' : t === 'url' ? '链接' : '搜索'}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex-1">
-                {activeTab === 'upload' && (
-                  <div 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="h-full border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/50 transition-all gap-2"
-                  >
-                    <Upload className="w-8 h-8 text-slate-300" />
-                    <span className="text-xs text-slate-500">点击选择图片文件</span>
-                    <input ref={fileInputRef} type="file" accept="image/*" onChange={handleLocalUpload} className="hidden" />
-                  </div>
+              <button
+                onClick={generateOutlineFromTitle}
+                disabled={isGeneratingOutline || !content.title}
+                className="w-full py-1.5 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:opacity-90 transition-all flex items-center justify-center gap-1 text-[10px] disabled:opacity-50"
+              >
+                {isGeneratingOutline ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <ListPlus className="w-3 h-3" />
                 )}
-                
-                {activeTab === 'url' && (
-                  <div className="space-y-3 pt-4">
-                    <input 
-                      type="text" 
-                      placeholder="https://example.com/image.jpg"
-                      onKeyDown={(e) => {
-                         if(e.key === 'Enter') {
-                            onChange({ ...content, cover_image: e.currentTarget.value })
-                            setShowImgMgr(false)
-                         }
-                      }}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#ff2442]"
-                    />
-                    <p className="text-xs text-slate-400">输入 URL 并回车</p>
-                  </div>
-                )}
-
-                {activeTab === 'search' && (
-                   <ImageSearchPanel onSelect={(url) => { onChange({...content, cover_image: url}); setShowImgMgr(false); }} query={content.title} />
-                )}
+                {isGeneratingOutline ? '生成中...' : 'AI大纲'}
+              </button>
+            </div>
+          </div>
+          
+          {/* 中间：当前页图片区域 */}
+          <div className="w-[300px] flex-shrink-0 border-r border-slate-100 bg-slate-50/50 flex flex-col">
+            <div className="p-3 border-b border-slate-100 flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-600">
+                {currentPageIndex === 0 ? '封面图' : `第 ${currentPageIndex} 页`}
+              </span>
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={() => setCurrentPageIndex(Math.max(0, currentPageIndex - 1))}
+                  disabled={currentPageIndex === 0}
+                  className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 transition-colors"
+                >
+                  <ChevronLeft className="w-4 h-4 text-slate-500" />
+                </button>
+                <span className="text-xs text-slate-400">{currentPageIndex + 1}/{pages.length}</span>
+                <button 
+                  onClick={() => setCurrentPageIndex(Math.min(pages.length - 1, currentPageIndex + 1))}
+                  disabled={currentPageIndex === pages.length - 1}
+                  className="p-1 rounded hover:bg-slate-200 disabled:opacity-30 transition-colors"
+                >
+                  <ChevronRight className="w-4 h-4 text-slate-500" />
+                </button>
               </div>
             </div>
-          )}
-        </div>
-
-        <div className="p-5 flex-1 flex flex-col gap-5">
-           <div className="space-y-1">
-             <input
-               type="text"
-               value={content.title}
-               onChange={(e) => onChange({...content, title: e.target.value})}
-              placeholder="输入一个吸引人的标题..."
-               className={`w-full text-lg font-bold text-slate-800 placeholder:text-slate-300 border-none p-0 focus:ring-0 bg-transparent`}
-             />
-             <div className="h-0.5 w-10 bg-slate-200 rounded-full" />
-           </div>
-
-           <textarea
-             value={content.body}
-             onChange={(e) => onChange({...content, body: e.target.value})}
-            placeholder="在这里输入笔记正文..."
-             className="w-full flex-1 resize-none text-sm leading-relaxed text-slate-600 placeholder:text-slate-300 border-none p-0 focus:ring-0 bg-transparent"
-           />
-
-           <div className="space-y-2 pt-4 border-t border-slate-100">
-             <div className="flex flex-wrap gap-2">
-               {content.tags.map(tag => (
-                 <span key={tag} className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-600 text-xs rounded-md">
-                   #{tag}
-                   <button onClick={() => onChange({...content, tags: content.tags.filter(t => t !== tag)})} className="hover:text-red-500"><X className="w-3 h-3" /></button>
-                 </span>
-               ))}
-               <div className="flex items-center gap-1 text-slate-400 bg-slate-50 px-2 py-1 rounded-md border border-slate-100 focus-within:border-[#ff2442] focus-within:ring-1 focus-within:ring-red-100 transition-all">
-                  <Plus className="w-3 h-3" />
-                  <input 
-                    type="text" 
-                    placeholder="标签" 
-                    onKeyDown={handleTagKey}
-                    className="w-16 text-xs bg-transparent border-none p-0 focus:ring-0 text-slate-700 placeholder:text-slate-400"
+            
+            <div className="relative flex-1 flex items-center justify-center p-3">
+              {currentPage.image ? (
+                <div className="relative w-full h-full flex items-center justify-center">
+                  <img 
+                    src={currentPage.image} 
+                    alt={`第${currentPageIndex + 1}页`}
+                    className="max-w-full max-h-full object-contain rounded-lg cursor-zoom-in hover:shadow-lg transition-shadow"
+                    onClick={() => setShowImagePreview(true)}
                   />
-               </div>
-             </div>
-           </div>
+                  <div className="absolute bottom-2 right-2 flex gap-1.5">
+                    <button 
+                      onClick={() => setShowImagePreview(true)}
+                      className="bg-black/60 text-white text-[10px] px-2 py-1 rounded-full hover:bg-black/80 transition-colors backdrop-blur-sm"
+                    >
+                      🔍
+                    </button>
+                    <button 
+                      onClick={() => setShowImgMgr(true)}
+                      className="bg-black/60 text-white text-[10px] px-2 py-1 rounded-full hover:bg-black/80 transition-colors backdrop-blur-sm"
+                    >
+                      换图
+                    </button>
+                    <button 
+                      onClick={generateCurrentPageImage}
+                      disabled={isGeneratingPage}
+                      className="bg-black/60 text-white text-[10px] px-2 py-1 rounded-full hover:bg-black/80 transition-colors backdrop-blur-sm disabled:opacity-50"
+                    >
+                      {isGeneratingPage ? '...' : '🎨'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div 
+                  onClick={() => isGeneratingPage ? null : generateCurrentPageImage()}
+                  className={`w-full h-64 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center transition-all gap-2 ${
+                    isGeneratingPage ? 'cursor-wait' : 'cursor-pointer hover:border-blue-400 hover:bg-blue-50/30'
+                  }`}
+                >
+                  {isGeneratingPage ? (
+                    <>
+                      <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+                      <span className="text-xs text-blue-500">AI 生成中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-8 h-8 text-slate-300" />
+                      <span className="text-xs text-slate-500">点击 AI 生成图片</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setShowImgMgr(true) }}
+                        className="text-[10px] text-blue-500 hover:underline"
+                      >
+                        或手动上传
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* 图片管理器浮窗 */}
+              {showImgMgr && (
+                <div className="absolute inset-0 bg-white/98 backdrop-blur-md z-20 flex flex-col p-4 animate-in fade-in zoom-in duration-200">
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="font-semibold text-sm text-slate-700">图片管理</span>
+                    <button onClick={() => setShowImgMgr(false)}><X className="w-4 h-4 text-slate-400 hover:text-slate-600" /></button>
+                  </div>
+                  
+                  <div className="flex gap-1 mb-3 p-1 bg-slate-100 rounded-lg">
+                    {(['upload', 'url', 'search'] as const).map(t => (
+                      <button 
+                        key={t}
+                        onClick={() => setActiveTab(t)}
+                        className={`flex-1 py-1.5 text-[10px] font-medium rounded-md ${activeTab === t ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        {t === 'upload' ? '📁 上传' : t === 'url' ? '🔗 链接' : '🎨 AI'}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex-1 overflow-hidden">
+                    {activeTab === 'upload' && (
+                      <div 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="h-full border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/50 transition-all gap-2"
+                      >
+                        <Upload className="w-6 h-6 text-slate-300" />
+                        <span className="text-xs text-slate-500">选择图片</span>
+                        <input ref={fileInputRef} type="file" accept="image/*" onChange={handleLocalUpload} className="hidden" />
+                      </div>
+                    )}
+                    
+                    {activeTab === 'url' && (
+                      <div className="space-y-2 pt-2">
+                        <input 
+                          type="text" 
+                          placeholder="https://..."
+                          onKeyDown={(e) => {
+                            if(e.key === 'Enter') {
+                              const newPages = [...pages]
+                              newPages[currentPageIndex] = { ...currentPage, image: e.currentTarget.value, status: 'done' }
+                              updatePages(newPages)
+                              setShowImgMgr(false)
+                            }
+                          }}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-[#ff2442]"
+                        />
+                        <p className="text-[10px] text-slate-400">粘贴 URL 按回车</p>
+                      </div>
+                    )}
+
+                    {activeTab === 'search' && (
+                      <ImageSearchPanel 
+                        onSelect={(url) => { 
+                          const newPages = [...pages]
+                          newPages[currentPageIndex] = { ...currentPage, image: url, status: 'done' }
+                          updatePages(newPages)
+                          setShowImgMgr(false)
+                        }} 
+                        query={currentPage.content || content.title} 
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 当前页文案编辑 */}
+            <div className="p-3 border-t border-slate-100">
+              <label className="text-[10px] font-medium text-slate-400 uppercase mb-1 block">页面描述</label>
+              <textarea
+                value={currentPage.content}
+                onChange={(e) => updatePageContent(e.target.value)}
+                placeholder="描述这一页的内容..."
+                className="w-full h-16 resize-none text-xs text-slate-600 placeholder:text-slate-300 border border-slate-100 rounded-lg p-2 focus:ring-1 focus:ring-blue-100 focus:border-blue-300 bg-white transition-all"
+              />
+            </div>
+          </div>
+          
+          {/* 右侧：文本编辑区域 */}
+          <div className="flex-1 flex flex-col min-w-0">
+            <div className="p-5 flex-1 flex flex-col gap-3">
+              {/* 标题 */}
+              <div>
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1 block">标题</label>
+                <input
+                  type="text"
+                  value={content.title}
+                  onChange={(e) => onChange({...content, title: e.target.value})}
+                  placeholder="输入一个吸引人的标题..."
+                  className="w-full text-lg font-bold text-slate-800 placeholder:text-slate-300 border-none p-0 focus:ring-0 bg-transparent"
+                />
+                <div className="h-px w-full bg-slate-100 mt-2" />
+              </div>
+
+              {/* 正文 */}
+              <div className="flex-1 flex flex-col">
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1 block">正文</label>
+                <textarea
+                  value={content.body}
+                  onChange={(e) => onChange({...content, body: e.target.value})}
+                  placeholder="在这里输入笔记正文...&#10;&#10;话少一点，梗多一点 🤙"
+                  className="w-full flex-1 min-h-[140px] resize-none text-sm leading-relaxed text-slate-600 placeholder:text-slate-300 border border-slate-100 rounded-lg p-3 focus:ring-1 focus:ring-blue-100 focus:border-blue-300 bg-slate-50/50 transition-all"
+                />
+              </div>
+
+              {/* 标签 */}
+              <div className="pt-2 border-t border-slate-100">
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2 block">标签</label>
+                <div className="flex flex-wrap gap-2">
+                  {content.tags.map(tag => (
+                    <span key={tag} className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-600 text-xs font-medium rounded-full border border-blue-100">
+                      #{tag}
+                      <button onClick={() => onChange({...content, tags: content.tags.filter(t => t !== tag)})} className="hover:text-red-500 transition-colors"><X className="w-3 h-3" /></button>
+                    </span>
+                  ))}
+                  <div className="inline-flex items-center gap-1 text-slate-400 bg-white px-2.5 py-1 rounded-full border border-slate-200 focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-100 transition-all">
+                    <Plus className="w-3 h-3" />
+                    <input 
+                      type="text" 
+                      placeholder="添加标签" 
+                      onKeyDown={handleTagKey}
+                      className="w-20 text-xs bg-transparent border-none p-0 focus:ring-0 text-slate-700 placeholder:text-slate-400"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {/* 底部操作栏 */}
+            <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/50 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <span className={`text-sm font-bold ${theme.accent}`}>{label}</span>
+                <span className="text-xs text-slate-400">· {pages.length} 页</span>
+              </div>
+              <div className="flex gap-2 items-center">
+                <button 
+                  onClick={generateAllImages}
+                  disabled={isGeneratingPage}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 transition-all disabled:opacity-50 flex items-center gap-1"
+                >
+                  <Wand2 className="w-3 h-3" />
+                  {isGeneratingPage ? '生成中...' : '批量生图'}
+                </button>
+                <button 
+                  onClick={onPublish}
+                  disabled={isPublishing || !content.title}
+                  className={`px-4 py-1.5 text-xs font-semibold rounded-lg shadow-sm transition-all disabled:opacity-50 disabled:shadow-none hover:opacity-90 ${
+                    colorTheme === 'blue' 
+                      ? 'bg-blue-500 text-white hover:bg-blue-600' 
+                      : 'bg-[#ff2442] text-white hover:bg-[#e61f3d]'
+                  }`}
+                >
+                  {isPublishing ? '发布中...' : '发布笔记'}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-      
-      <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/50 flex justify-between items-center">
-        <span className={`text-sm font-bold ${theme.accent}`}>{label}</span>
-        <div className="flex gap-3">
-          <button className="text-slate-400 hover:text-slate-600"><Share2 className="w-4 h-4" /></button>
-          <button 
-             onClick={onPublish}
-             disabled={isPublishing || !content.title}
-             className={`px-4 py-1.5 text-xs font-semibold rounded-lg shadow-sm transition-all disabled:opacity-50 disabled:shadow-none hover:opacity-90 ${
-               colorTheme === 'blue' 
-                 ? 'bg-blue-500 text-white hover:bg-blue-600' 
-                 : 'bg-[#ff2442] text-white hover:bg-[#e61f3d]'
-             }`}
-          >
-            {isPublishing ? '发布中...' : '发布笔记'}
-          </button>
-        </div>
-      </div>
-    </div>
+    </>
   )
 }
 
 function ImageSearchPanel({ onSelect, query }: { onSelect: (url: string) => void, query: string }) {
-  const [images, setImages] = useState<string[]>([])
+  const [image, setImage] = useState<string>('')
   const [loading, setLoading] = useState(false)
 
-  const handleSearch = async () => {
+  const handleGenerate = async () => {
     setLoading(true)
     try {
-      const res = await searchImages(query || 'lifestyle', 6)
-      setImages(res)
-    } catch {
-       // ignore
+      const imageUrl = await generateImage(query || '小红书封面图', '小红书风格')
+      setImage(imageUrl)
+    } catch (error) {
+      console.error('生成图片失败:', error)
+      alert('图片生成失败，请稍后重试')
     } finally {
       setLoading(false)
     }
   }
 
-  // Auto search on mount
-  useEffect(() => { handleSearch() }, [])
+  // Auto generate on mount
+  useEffect(() => { handleGenerate() }, [])
 
   return (
     <div className="h-full flex flex-col">
-       <div className="flex gap-2 mb-2">
-         <input 
-            className="flex-1 px-2 py-1 text-xs border border-slate-200 rounded" 
-            defaultValue={query} 
-            onChange={() => { /* no-op for now */ }}
-         />
-         <button onClick={handleSearch} className="bg-slate-100 p-1 rounded hover:bg-slate-200"><Search className="w-3 h-3 text-slate-600" /></button>
-       </div>
-       {loading ? (
-         <div className="flex-1 flex items-center justify-center"><Loader2 className="w-4 h-4 animate-spin text-slate-400" /></div>
-       ) : (
-         <div className="grid grid-cols-2 gap-2 overflow-y-auto max-h-[160px]">
-           {images.map((img, i) => (
-             <img key={i} src={img} className="w-full h-20 object-cover rounded cursor-pointer hover:opacity-80 border border-slate-100" onClick={() => onSelect(img)} />
-           ))}
-         </div>
-       )}
+      {loading && (
+        <div className="flex-1 flex flex-col items-center justify-center">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600 mb-3"></div>
+          <p className="text-sm text-slate-600">AI 正在生成图片...</p>
+        </div>
+      )}
+      {!loading && image && (
+        <div className="flex-1 flex flex-col gap-3">
+          <img src={image} alt="AI生成" className="w-full rounded-lg border border-slate-200" />
+          <button
+            onClick={() => onSelect(image)}
+            className="w-full py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors"
+          >
+            使用这张图片
+          </button>
+          <button
+            onClick={handleGenerate}
+            className="w-full py-2 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors"
+          >
+            重新生成
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
-function TestResultPanel({ result }: { result: MultiCrowdTestResult }) {
-  const winnerLabel = result.overall_confidence.winner && result.overall_confidence.winner !== '-' ? result.overall_confidence.winner : '\u2014'
-  const totalUsers = Math.max(result.persona_results.length, 1)
-  const scoreItems = result.version_scores
-
+function TestResultPanel({ result }: { result: CrowdTestResult }) {
   return (
     <div className="space-y-6">
+      {/* 胜出者卡片 */}
       <div className="bg-gradient-to-br from-[#ff2442] to-[#e61f3d] rounded-xl p-4 text-white shadow-md shadow-red-200">
         <div className="flex items-center gap-2 mb-2 opacity-90">
-          <Sparkles className="w-4 h-4 text-white" />
-          <span className="text-xs font-bold uppercase tracking-wide">{'\u83b7\u80dc\u7248\u672c'}</span>
+             <Sparkles className="w-4 h-4 text-white" />
+             <span className="text-xs font-bold uppercase tracking-wide">获胜版本</span>
         </div>
-        <div className="text-2xl font-bold mb-1">{winnerLabel}</div>
+        <div className="text-2xl font-bold mb-1">
+          Version {result.overall_confidence.winner}
+        </div>
         <div className="text-xs opacity-80 leading-relaxed">
-          {'\u7efc\u5408\u8868\u73b0\u4f18\u4e8e\u5bf9\u7167\u7ec4 '}
-          {result.overall_confidence.confidence.toFixed(0)}%
+          综合表现优于对照组 {result.overall_confidence.confidence.toFixed(0)}%
         </div>
       </div>
 
-      <div className="space-y-3">
-        <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
-          <BarChart3 className="w-3 h-3" /> {'\u6570\u636e\u5bf9\u6bd4'}
-        </h4>
-        <StatBar label={'\u70b9\u8d5e\u6570 (Likes)'} totalUsers={totalUsers} items={scoreItems.map(v => ({ label: v.label, value: v.score.like_count }))} />
-        <StatBar label={'\u6536\u85cf\u6570 (Saves)'} totalUsers={totalUsers} items={scoreItems.map(v => ({ label: v.label, value: v.score.save_count }))} />
-        <StatBar label={'\u8bc4\u8bba\u6570 (Comments)'} totalUsers={totalUsers} items={scoreItems.map(v => ({ label: v.label, value: v.score.comment_count }))} />
-        <StatBar label={'\u5206\u4eab\u6570 (Shares)'} totalUsers={totalUsers} items={scoreItems.map(v => ({ label: v.label, value: v.score.share_count }))} />
-        <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-xs text-slate-600 flex items-center justify-between">
-          <span>{'\u603b\u4f53\u7f6e\u4fe1\u5ea6 (Overall)'}</span>
-          <span className="font-semibold text-slate-700">
-            {winnerLabel} - {result.overall_confidence.confidence.toFixed(0)}%
-          </span>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
-          <UserCircle2 className="w-3 h-3" /> {'\u6a21\u62df\u7528\u6237\u58f0\u97f3'}
-        </h4>
+       {/* Detailed Stats */}
         <div className="space-y-3">
-          {result.suggestions.slice(0, 2).map((s, i) => (
-            <div key={i} className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[10px] text-slate-500 font-bold">U{i + 1}</div>
-                <span className="text-slate-400 scale-75">just now</span>
-              </div>
-              <p className="text-slate-600 leading-normal">{s}</p>
-            </div>
-          ))}
+          <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
+             <BarChart3 className="w-3 h-3" /> 数据对比
+          </h4>
+         <StatBar label="点赞数 (Likes)" scoreA={result.version_a_score.like_count} scoreB={result.version_b_score.like_count} totalUsers={result.persona_results.length} />
+         <StatBar label="收藏数 (Saves)" scoreA={result.version_a_score.save_count} scoreB={result.version_b_score.save_count} totalUsers={result.persona_results.length} />
+          <StatBar label="评论数 (Comments)" scoreA={result.version_a_score.comment_count} scoreB={result.version_b_score.comment_count} totalUsers={result.persona_results.length} />
+          <StatBar label="分享数 (Shares)" scoreA={result.version_a_score.share_count} scoreB={result.version_b_score.share_count} totalUsers={result.persona_results.length} />
+          <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-xs text-slate-600 flex items-center justify-between">
+            <span>总体置信度 (Overall)</span>
+            <span className="font-semibold text-slate-700">
+              Version {result.overall_confidence.winner} · {result.overall_confidence.confidence.toFixed(0)}%
+            </span>
+          </div>
         </div>
-      </div>
+       
+       {/* 模拟用户反馈 */}
+       <div className="space-y-3">
+          <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
+             <UserCircle2 className="w-3 h-3" /> 模拟用户声音
+          </h4>
+          <div className="space-y-3">
+             {result.suggestions.slice(0,2).map((s,i) => (
+               <div key={i} className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs">
+                 <div className="flex items-center gap-2 mb-1">
+                    <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[10px] text-slate-500 font-bold">U{i+1}</div>
+                    <span className="text-slate-400 scale-75">just now</span>
+                 </div>
+                 <p className="text-slate-600 leading-normal">{s}</p>
+               </div>
+             ))}
+          </div>
+       </div>
 
-      <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
-        <h4 className="text-xs font-semibold text-amber-700 mb-1">{'\u6539\u8fdb\u5efa\u8bae'}</h4>
-        <ul className="list-disc pl-4 space-y-1">
-          {result.diagnosis.slice(0, 3).map((d, i) => (
-            <li key={i} className="text-xs text-amber-700 leading-normal">{d}</li>
-          ))}
-        </ul>
-      </div>
+       <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
+          <h4 className="text-xs font-semibold text-amber-700 mb-1">改进建议</h4>
+          <ul className="list-disc pl-4 space-y-1">
+             {result.diagnosis.slice(0,3).map((d, i) => (
+                <li key={i} className="text-xs text-amber-700 leading-normal">{d}</li>
+             ))}
+          </ul>
+       </div>
     </div>
   )
 }
 
-function StatBar({ label, totalUsers, items }: { label: string, totalUsers: number, items: Array<{ label: string, value: number }> }) {
+function StatBar({ label, scoreA, scoreB, totalUsers }: { label: string, scoreA: number, scoreB: number, totalUsers: number }) {
   const base = Math.max(totalUsers, 1)
-  const palette = ['#ff2442', '#ff7a90', '#ffa9b6', '#ffd1d8', '#ffe3e7', '#ffeef1']
-
+  const pA = (scoreA / base) * 100
+  const pB = (scoreB / base) * 100
+  
   return (
     <div className="bg-white border focus-within:ring-1 border-slate-100 rounded-lg p-3 shadow-sm">
       <div className="flex justify-between mb-2">
         <span className="text-xs font-medium text-slate-500">{label}</span>
       </div>
       <div className="space-y-2">
-        {items.map((item, index) => {
-          const pct = (item.value / base) * 100
-          const color = palette[index % palette.length]
-          return (
-            <div key={item.label} className="flex items-center gap-2">
-              <span className="text-[10px] w-16 text-slate-600 font-semibold truncate">{item.label}</span>
-              <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                <div style={{ width: `${pct}%`, backgroundColor: color }} className="h-full rounded-full" />
-              </div>
-              <span className="text-[10px] w-10 text-slate-500 text-right">{pct.toFixed(0)}%</span>
-            </div>
-          )
-        })}
+        {/* A Version */}
+        <div className="flex items-center gap-2">
+           <span className="text-[10px] w-3 text-blue-500 font-bold">A</span>
+           <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+             <div style={{ width: `${pA}%` }} className="h-full bg-blue-500 rounded-full" />
+           </div>
+           <span className="text-[10px] w-10 text-blue-600 text-right">{pA.toFixed(0)}%</span>
+        </div>
+        {/* B Version */}
+        <div className="flex items-center gap-2">
+           <span className="text-[10px] w-3 text-[#ff2442] font-bold">B</span>
+           <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+             <div style={{ width: `${pB}%` }} className="h-full bg-[#ff2442] rounded-full" />
+           </div>
+           <span className="text-[10px] w-10 text-[#ff2442] font-bold text-right">{pB.toFixed(0)}%</span>
+        </div>
       </div>
     </div>
   )

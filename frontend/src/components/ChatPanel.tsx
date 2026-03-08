@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Send, Sparkles, Loader2 } from 'lucide-react'
+import { Send, Sparkles, Loader2, Image, X } from 'lucide-react'
 import type { ChatMessage, TaskSpec, ContentItem } from '../types/api'
 import { sendChatMessage } from '../services/api'
 import { useApp } from '../contexts/AppContext'
@@ -13,7 +13,9 @@ export default function ChatPanel({ onTaskSpecUpdate, onContentGenerated }: Chat
   const { messages, addMessage } = useApp()
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [selectedImages, setSelectedImages] = useState<string[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -24,11 +26,16 @@ export default function ChatPanel({ onTaskSpecUpdate, onContentGenerated }: Chat
   }, [messages])
 
   const handleSend = async () => {
-    if (!input.trim() || isLoading) return
+    if ((!input.trim() && selectedImages.length === 0) || isLoading) return
 
-    const userMessage: ChatMessage = { role: 'user', content: input.trim() }
+    const userMessage: ChatMessage = { 
+      role: 'user', 
+      content: input.trim() || '（发送了图片）',
+      images: selectedImages.length > 0 ? selectedImages : undefined
+    }
     addMessage(userMessage)
     setInput('')
+    setSelectedImages([])
     setIsLoading(true)
 
     try {
@@ -91,6 +98,18 @@ export default function ChatPanel({ onTaskSpecUpdate, onContentGenerated }: Chat
                   : 'bg-gray-50 text-gray-700 border border-gray-100'
               }`}
             >
+              {msg.images && msg.images.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {msg.images.map((img, imgIdx) => (
+                    <img
+                      key={imgIdx}
+                      src={img}
+                      alt="上传的图片"
+                      className="max-w-[200px] max-h-[200px] rounded-lg object-cover"
+                    />
+                  ))}
+                </div>
+              )}
               <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
             </div>
           </div>
@@ -110,7 +129,55 @@ export default function ChatPanel({ onTaskSpecUpdate, onContentGenerated }: Chat
 
       {/* 输入框 */}
       <div className="flex-shrink-0 p-4 border-t border-gray-100/50 bg-gray-50/50">
+        {/* 图片预览 */}
+        {selectedImages.length > 0 && (
+          <div className="mb-3 flex flex-wrap gap-2">
+            {selectedImages.map((img, idx) => (
+              <div key={idx} className="relative group">
+                <img
+                  src={img}
+                  alt={`预览 ${idx + 1}`}
+                  className="w-20 h-20 rounded-lg object-cover border border-gray-200"
+                />
+                <button
+                  onClick={() => setSelectedImages(selectedImages.filter((_, i) => i !== idx))}
+                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex gap-3 items-end">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(e) => {
+              const files = e.target.files
+              if (files) {
+                Array.from(files).forEach((file) => {
+                  const reader = new FileReader()
+                  reader.onload = (e) => {
+                    const result = e.target?.result as string
+                    setSelectedImages((prev) => [...prev, result])
+                  }
+                  reader.readAsDataURL(file)
+                })
+              }
+              e.target.value = ''
+            }}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="bg-white border border-gray-200 text-gray-600 p-3.5 rounded-xl hover:bg-gray-50 hover:border-xhs-red transition-all"
+            title="上传图片"
+          >
+            <Image className="w-5 h-5" />
+          </button>
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -121,7 +188,7 @@ export default function ChatPanel({ onTaskSpecUpdate, onContentGenerated }: Chat
           />
           <button
             onClick={handleSend}
-            disabled={!input.trim() || isLoading}
+            disabled={(!input.trim() && selectedImages.length === 0) || isLoading}
             className="bg-gradient-to-br from-xhs-red to-pink-500 text-white p-3.5 rounded-xl hover:shadow-lg hover:shadow-red-200/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
           >
             <Send className="w-5 h-5" />

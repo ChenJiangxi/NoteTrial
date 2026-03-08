@@ -144,7 +144,7 @@ async def chat(request: ChatRequest):
     if not generator:
         raise HTTPException(status_code=500, detail="服务未初始化")
     
-    message, task_spec, generated_content = await generator.parse_task_from_chat(
+    message, task_spec, generated_content, action = await generator.parse_task_from_chat(
         request.messages,
         request.current_content
     )
@@ -170,7 +170,8 @@ async def chat(request: ChatRequest):
     return ChatResponse(
         message=message,
         task_spec=task_spec,
-        generated_content=generated_content
+        generated_content=generated_content,
+        action=action
     )
 
 
@@ -406,13 +407,41 @@ async def mcp_tools():
 @app.get("/api/search-images")
 async def search_images(topic: str, limit: int = 5):
     """
-    搜索话题相关的图片（用于自动配图）
+    搜索话题相关的图片（用于自动配图）- 已废弃，改用 generate-image
     """
     if not calibrator:
         return {"images": [], "error": "服务未初始化"}
     
     images = await calibrator.search_images_for_topic(topic, limit)
     return {"images": images, "topic": topic}
+
+
+@app.post("/api/generate-image")
+async def generate_image_endpoint(request: dict):
+    """
+    使用 AI 生成图片（用于自动配图）
+    """
+    if not image_gen:
+        raise HTTPException(status_code=500, detail="图片生成服务未初始化")
+    
+    topic = request.get("topic", "")
+    style = request.get("style", "小红书风格")
+    
+    if not topic:
+        raise HTTPException(status_code=400, detail="缺少 topic 参数")
+    
+    try:
+        # 构建图片生成提示词
+        prompt = f"{topic} - 适合小红书封面的高质量图片"
+        image_url = await image_gen.generate_image(prompt, style=style, aspect_ratio="3:4")
+        
+        if image_url:
+            return {"image": image_url, "topic": topic, "success": True}
+        else:
+            raise HTTPException(status_code=500, detail="图片生成失败")
+    except Exception as e:
+        print(f"生成图片失败: {e}")
+        raise HTTPException(status_code=500, detail=f"图片生成失败: {str(e)}")
 
 
 @app.get("/api/search-feeds")
@@ -846,6 +875,78 @@ async def generate_cover(content: ContentItem, topic: str = ""):
             return {"success": False, "error": "封面生成失败"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"封面生成出错: {str(e)}")
+
+
+# ----------------------------------------------------------------------------
+# 多图批量生成 API (RedInk 风格)
+# ----------------------------------------------------------------------------
+
+class OutlineRequest(BaseModel):
+    """大纲生成请求"""
+    topic: str
+    page_count: int = 6
+    style: str = "小红书风格"
+
+
+class BatchImagesRequest(BaseModel):
+    """批量图片生成请求"""
+    pages: list  # [{"index": 0, "type": "cover", "content": "..."}]
+    topic: str = ""
+    full_outline: str = ""
+
+
+@app.post("/api/generate-outline")
+async def generate_outline(request: OutlineRequest):
+    """
+    生成多页内容大纲
+    
+    参考 RedInk 的 <page> 分隔符格式
+    """
+    from .services import get_outline_generator
+    
+    try:
+        outline_gen = get_outline_generator()
+        result = await outline_gen.generate_outline(
+            topic=request.topic,
+            page_count=request.page_count,
+            style=request.style
+        )
+        return {"success": True, **result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"大纲生成失败: {str(e)}")
+
+
+@app.post("/api/generate-batch-images")
+async def generate_batch_images(request: BatchImagesRequest):
+    """
+    批量生成多页图片（封面优先策略）
+    
+    1. 先生成封面图
+    2. 用封面作为参考，确保风格一致性
+    3. 依次生成其他页面
+    """
+    if not image_gen:
+        raise HTTPException(status_code=500, detail="图片生成服务未初始化")
+    
+    try:
+        results = await image_gen.generate_batch(
+            pages=request.pages,
+            user_topic=request.topic,
+            full_outline=request.full_outline
+        )
+        
+        success_count = sum(1 for p in results if p.get("status") == "done")
+        return {
+            "success": True,
+            "pages": results,
+            "stats": {
+                "total": len(results),
+                "success": success_count,
+                "failed": len(results) - success_count
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"批量图片生成失败: {str(e)}")
 
 
 @app.post("/api/expand-topic")
@@ -1426,6 +1527,261 @@ async def get_reference_content(topic: str, max_count: int = 3):
     learner = get_history_learner()
     refs = learner.get_reference_content(topic=topic, max_count=max_count)
     return {"references": refs}
+
+
+# ============ 多源内容生成 API ============
+
+class MultiSourceGenerateRequest(BaseModel):
+    """多源内容生成请求"""
+    topic: str
+    goals: list[str] = ["maximize_save"]
+    audience: str = "小红书用户"
+    user_materials: str = ""  # 用户提供的素材文本
+    use_xhs_samples: bool = True  # 是否使用小红书样本
+    use_web_search: bool = True  # 是否使用网页搜索
+    use_material_library: bool = True  # 是否使用素材库
+    humanize: bool = True  # 是否人性化处理
+
+
+@app.post("/api/generate-multi-source")
+async def generate_multi_source(request: MultiSourceGenerateRequest):
+    """
+    多源参考内容生成
+    
+    整合以下信息源：
+    1. 小红书爆款样本（从 MCP 搜索）
+    2. 互联网知识搜索（AI 知识库）
+    3. 用户素材库（图片、文案）
+    4. 用户输入的素材文本
+    """
+    if not generator or not calibrator:
+        raise HTTPException(status_code=500, detail="服务未初始化")
+    
+    # 1. 搜索小红书样本
+    xhs_samples = []
+    if request.use_xhs_samples:
+        try:
+            xhs_samples = await calibrator.search_topic_samples(request.topic, limit=10)
+        except Exception as e:
+            print(f"搜索小红书样本失败: {e}")
+    
+    # 2. 获取互联网知识
+    web_knowledge = None
+    if request.use_web_search:
+        try:
+            from .services import get_web_search_service
+            web_service = get_web_search_service()
+            web_knowledge = await web_service.search_for_content_creation(
+                topic=request.topic,
+                content_type="分享",
+                target_audience=request.audience
+            )
+        except Exception as e:
+            print(f"网页搜索失败: {e}")
+    
+    # 3. 获取素材库相关文案
+    material_texts = []
+    if request.use_material_library:
+        try:
+            library = get_material_library()
+            relevant = library.get_relevant_materials(
+                topic=request.topic,
+                text_types=["copy", "title", "hook"],
+                max_images=0,
+                max_texts=5
+            )
+            material_texts = relevant.get("texts", [])
+        except Exception as e:
+            print(f"获取素材库失败: {e}")
+    
+    # 4. 获取校准数据
+    calibration_data = await calibrator.get_calibration_data(request.topic)
+    
+    # 5. 构建任务规格
+    from .models import TaskSpec, OptimizationGoal, Platform
+    goal_map = {
+        "maximize_save": OptimizationGoal.MAXIMIZE_SAVE,
+        "maximize_like": OptimizationGoal.MAXIMIZE_LIKE,
+        "maximize_comment": OptimizationGoal.MAXIMIZE_COMMENT,
+        "maximize_share": OptimizationGoal.MAXIMIZE_SHARE,
+    }
+    task_spec = TaskSpec(
+        platform=Platform.XIAOHONGSHU,
+        goals=[goal_map.get(g, OptimizationGoal.MAXIMIZE_SAVE) for g in request.goals],
+        audience=request.audience,
+        topic=request.topic,
+        tone_constraints=["真实", "不营销", "口语化"]
+    )
+    
+    # 6. 生成内容
+    content = await generator.generate_with_multi_source(
+        task_spec=task_spec,
+        xhs_samples=xhs_samples,
+        web_knowledge=web_knowledge,
+        material_texts=material_texts,
+        user_materials=request.user_materials,
+        calibration_data=calibration_data
+    )
+    
+    # 7. 人性化处理
+    if request.humanize and humanize_service:
+        content.title = humanize_service.humanize_title(content.title)
+        content.body = humanize_service.humanize_body(content.body)
+    
+    return {
+        "content": content,
+        "sources_used": {
+            "xhs_samples": len(xhs_samples),
+            "web_knowledge": bool(web_knowledge),
+            "material_texts": len(material_texts),
+            "user_materials": bool(request.user_materials)
+        },
+        "calibration": {
+            "avg_title_length": calibration_data.avg_title_length,
+            "common_patterns": calibration_data.common_opening_patterns[:3],
+            "emoji_rate": calibration_data.emoji_usage_rate,
+            "common_tags": calibration_data.common_tags[:5]
+        }
+    }
+
+
+# ============ 素材库增强 API ============
+
+class AddVideoRequest(BaseModel):
+    """添加视频素材请求"""
+    video_url: str
+    thumbnail: str = ""
+    filename: str = ""
+    tags: list[str] = []
+    description: str = ""
+    duration: int = 0
+
+
+@app.post("/api/materials/videos")
+async def add_material_video(request: AddVideoRequest):
+    """添加视频素材"""
+    library = get_material_library()
+    result = library.add_video(
+        video_url=request.video_url,
+        thumbnail=request.thumbnail,
+        filename=request.filename,
+        tags=request.tags,
+        description=request.description,
+        source="upload",
+        duration=request.duration
+    )
+    return {"success": True, "material": result}
+
+
+@app.get("/api/materials/videos")
+async def get_material_videos(tags: Optional[str] = None, limit: int = 20, offset: int = 0):
+    """获取视频素材列表"""
+    library = get_material_library()
+    tag_list = tags.split(",") if tags else None
+    videos = library.get_videos(tags=tag_list, limit=limit, offset=offset)
+    return {"videos": videos, "total": len(library.index.get("videos", []))}
+
+
+@app.delete("/api/materials/videos/{material_id}")
+async def delete_material_video(material_id: str):
+    """删除视频素材"""
+    library = get_material_library()
+    success = library.delete_video(material_id)
+    return {"success": success}
+
+
+class CollectFromXhsRequest(BaseModel):
+    """从小红书采集素材请求"""
+    note_id: str
+    collect_images: bool = True
+    collect_video: bool = True
+    auto_tags: list[str] = []
+
+
+@app.post("/api/materials/collect-xhs")
+async def collect_materials_from_xhs(request: CollectFromXhsRequest):
+    """从小红书笔记采集素材"""
+    if not calibrator:
+        raise HTTPException(status_code=500, detail="服务未初始化")
+    
+    # 获取笔记详情
+    try:
+        note_result = await calibrator._call_tool("get_note_detail", {
+            "note_id": request.note_id
+        })
+        
+        if not note_result:
+            raise HTTPException(status_code=404, detail="未找到笔记")
+        
+        # 解析笔记数据
+        content = note_result.get("content", [{}])[0].get("text", "{}")
+        note_data = json.loads(content) if isinstance(content, str) else content
+        
+        # 采集素材
+        library = get_material_library()
+        result = await library.collect_from_xhs(
+            note_data=note_data,
+            collect_images=request.collect_images,
+            collect_video=request.collect_video,
+            auto_tags=request.auto_tags
+        )
+        
+        return {
+            "success": True,
+            "collected": {
+                "images": len(result.get("images", [])),
+                "video": result.get("video") is not None,
+                "text": result.get("text") is not None
+            },
+            "materials": result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"采集失败: {str(e)}")
+
+
+@app.get("/api/materials/recommend")
+async def recommend_materials(topic: str, content_type: str = "image", limit: int = 5):
+    """智能推荐素材"""
+    library = get_material_library()
+    recommendations = library.recommend_materials(
+        topic=topic,
+        content_type=content_type,
+        limit=limit
+    )
+    return {"recommendations": recommendations, "topic": topic}
+
+
+# ============ 话题研究 API ============
+
+@app.get("/api/research/topic")
+async def research_topic(topic: str):
+    """
+    话题研究 - 获取话题相关的背景知识、写作角度
+    
+    用于内容生成前的预处理
+    """
+    try:
+        from .services import get_web_search_service
+        web_service = get_web_search_service()
+        
+        # 丰富话题信息
+        enriched = await web_service.enrich_topic(topic)
+        
+        return {
+            "topic": topic,
+            "research": enriched
+        }
+    except Exception as e:
+        return {
+            "topic": topic,
+            "research": {
+                "topic_summary": topic,
+                "key_knowledge": [],
+                "common_questions": [],
+                "hot_angles": [],
+                "error": str(e)
+            }
+        }
 
 
 # 应用入口

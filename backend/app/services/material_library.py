@@ -38,7 +38,8 @@ class MaterialLibrary:
             "images": [],
             "texts": [],
             "tags": {},
-            "collections": []
+            "collections": [],
+            "videos": []  # 新增视频素材支持
         }
     
     def _save_index(self):
@@ -54,7 +55,8 @@ class MaterialLibrary:
         filename: Optional[str] = None,
         tags: Optional[List[str]] = None,
         description: Optional[str] = None,
-        source: Optional[str] = None
+        source: Optional[str] = None,
+        xhs_note_id: Optional[str] = None  # 关联的小红书笔记ID（采集来源）
     ) -> Dict[str, Any]:
         """
         添加图片素材
@@ -64,7 +66,8 @@ class MaterialLibrary:
             filename: 原文件名
             tags: 标签列表
             description: 描述
-            source: 来源（如：上传、采集、AI生成）
+            source: 来源（如：upload上传、collect采集、ai_generate AI生成）
+            xhs_note_id: 采集自小红书的笔记ID
         
         Returns:
             添加的图片信息
@@ -109,6 +112,7 @@ class MaterialLibrary:
             "tags": tags or [],
             "description": description or "",
             "source": source or "upload",
+            "xhs_note_id": xhs_note_id,
             "created_at": timestamp,
             "used_count": 0
         }
@@ -416,12 +420,310 @@ class MaterialLibrary:
                 self._save_index()
                 return
     
+    # ==================== 视频素材管理 ====================
+    
+    def add_video(
+        self,
+        video_url: str,
+        thumbnail: Optional[str] = None,  # 缩略图 URL 或 base64
+        filename: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        description: Optional[str] = None,
+        source: Optional[str] = None,
+        duration: Optional[int] = None,  # 时长（秒）
+        xhs_note_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        添加视频素材
+        
+        Args:
+            video_url: 视频URL
+            thumbnail: 缩略图
+            filename: 文件名
+            tags: 标签列表
+            description: 描述
+            source: 来源
+            duration: 时长（秒）
+            xhs_note_id: 采集自小红书的笔记ID
+        
+        Returns:
+            添加的视频信息
+        """
+        # 确保 videos 列表存在
+        if "videos" not in self.index:
+            self.index["videos"] = []
+        
+        material_id = str(uuid.uuid4())[:8]
+        timestamp = datetime.now().isoformat()
+        
+        material = {
+            "id": material_id,
+            "type": "video",
+            "url": video_url,
+            "thumbnail": thumbnail or "",
+            "filename": filename or f"video_{material_id}",
+            "tags": tags or [],
+            "description": description or "",
+            "source": source or "upload",
+            "duration": duration,
+            "xhs_note_id": xhs_note_id,
+            "created_at": timestamp,
+            "used_count": 0
+        }
+        
+        self.index["videos"].append(material)
+        
+        # 更新标签索引
+        for tag in (tags or []):
+            if tag not in self.index["tags"]:
+                self.index["tags"][tag] = []
+            self.index["tags"][tag].append(material_id)
+        
+        self._save_index()
+        return material
+    
+    def get_videos(
+        self,
+        tags: Optional[List[str]] = None,
+        limit: int = 20,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """获取视频素材列表"""
+        videos = self.index.get("videos", [])
+        
+        # 按标签筛选
+        if tags:
+            videos = [
+                v for v in videos
+                if any(t in v.get("tags", []) for t in tags)
+            ]
+        
+        # 按时间倒序
+        videos = sorted(videos, key=lambda x: x.get("created_at", ""), reverse=True)
+        
+        return videos[offset:offset + limit]
+    
+    def delete_video(self, material_id: str) -> bool:
+        """删除视频素材"""
+        videos = self.index.get("videos", [])
+        for i, video in enumerate(videos):
+            if video["id"] == material_id:
+                videos.pop(i)
+                
+                # 从标签索引移除
+                for tag in video.get("tags", []):
+                    if tag in self.index["tags"]:
+                        if material_id in self.index["tags"][tag]:
+                            self.index["tags"][tag].remove(material_id)
+                
+                self._save_index()
+                return True
+        return False
+    
+    # ==================== 小红书素材采集 ====================
+    
+    async def collect_from_xhs(
+        self,
+        note_data: Dict[str, Any],
+        collect_images: bool = True,
+        collect_video: bool = True,
+        auto_tags: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        从小红书笔记采集素材
+        
+        Args:
+            note_data: 小红书笔记数据（从 MCP 获取）
+            collect_images: 是否采集图片
+            collect_video: 是否采集视频
+            auto_tags: 自动添加的标签
+        
+        Returns:
+            采集结果 {images: [...], video: {...}, text: {...}}
+        """
+        result = {"images": [], "video": None, "text": None}
+        
+        note_card = note_data.get("noteCard", note_data)
+        note_id = note_card.get("noteId", note_data.get("id", ""))
+        title = note_card.get("displayTitle", note_card.get("title", ""))
+        desc = note_card.get("desc", "")
+        
+        # 提取标签
+        tags = auto_tags or []
+        if title:
+            # 从标题提取关键词作为标签
+            import re
+            keywords = re.findall(r'[\u4e00-\u9fa5a-zA-Z]{2,}', title)
+            tags.extend(keywords[:3])
+        
+        # 采集图片
+        if collect_images:
+            # 封面图
+            cover = note_card.get("cover", {})
+            cover_url = cover.get("url") or cover.get("urlDefault", "")
+            if cover_url:
+                img_material = self.add_image(
+                    image_data=cover_url,
+                    filename=f"xhs_{note_id}_cover",
+                    tags=tags,
+                    description=f"采集自小红书: {title[:30]}",
+                    source="xhs_collect",
+                    xhs_note_id=note_id
+                )
+                result["images"].append(img_material)
+            
+            # 图片列表（如果有）
+            images_list = note_card.get("imageList", [])
+            for i, img in enumerate(images_list[:9]):  # 最多9张
+                img_url = img.get("url") or img.get("urlDefault", "")
+                if img_url and img_url != cover_url:
+                    img_material = self.add_image(
+                        image_data=img_url,
+                        filename=f"xhs_{note_id}_{i}",
+                        tags=tags,
+                        description=f"采集自小红书: {title[:30]}",
+                        source="xhs_collect",
+                        xhs_note_id=note_id
+                    )
+                    result["images"].append(img_material)
+        
+        # 采集视频
+        if collect_video:
+            video = note_card.get("video", {})
+            video_url = video.get("url") or video.get("media", {}).get("stream", {}).get("h264", [{}])[0].get("masterUrl", "")
+            if video_url:
+                thumbnail = note_card.get("cover", {}).get("url", "")
+                duration = video.get("duration", 0)
+                
+                video_material = self.add_video(
+                    video_url=video_url,
+                    thumbnail=thumbnail,
+                    filename=f"xhs_{note_id}_video",
+                    tags=tags,
+                    description=f"采集自小红书: {title[:30]}",
+                    source="xhs_collect",
+                    duration=duration,
+                    xhs_note_id=note_id
+                )
+                result["video"] = video_material
+        
+        # 采集文案
+        if title or desc:
+            # 添加标题
+            if title:
+                title_material = self.add_text(
+                    content=title,
+                    text_type="title",
+                    tags=tags,
+                    description=f"采集自小红书笔记",
+                    source="xhs_collect",
+                    performance=self._extract_performance(note_card)
+                )
+                result["text"] = title_material
+            
+            # 添加正文
+            if desc:
+                self.add_text(
+                    content=desc,
+                    text_type="copy",
+                    tags=tags,
+                    description=f"采集自小红书笔记: {title[:20]}",
+                    source="xhs_collect",
+                    performance=self._extract_performance(note_card)
+                )
+        
+        return result
+    
+    def _extract_performance(self, note_card: Dict) -> Dict[str, int]:
+        """从笔记数据提取效果数据"""
+        interact = note_card.get("interactInfo", {})
+        return {
+            "likes": self._parse_count(interact.get("likedCount", 0)),
+            "collects": self._parse_count(interact.get("collectedCount", 0)),
+            "comments": self._parse_count(interact.get("commentCount", 0))
+        }
+    
+    def _parse_count(self, value) -> int:
+        """解析数量（支持 '1.2万' 格式）"""
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            value = value.strip()
+            if '万' in value:
+                return int(float(value.replace('万', '')) * 10000)
+            if 'k' in value.lower():
+                return int(float(value.lower().replace('k', '')) * 1000)
+            try:
+                return int(value)
+            except:
+                return 0
+        return 0
+    
+    # ==================== 智能素材推荐 ====================
+    
+    def recommend_materials(
+        self,
+        topic: str,
+        content_type: str = "image",  # image/video/text
+        limit: int = 5,
+        prefer_high_performance: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        智能推荐素材
+        
+        根据话题和效果数据推荐最合适的素材
+        """
+        topic_keywords = topic.lower().split()
+        
+        if content_type == "image":
+            candidates = self.index["images"]
+        elif content_type == "video":
+            candidates = self.index.get("videos", [])
+        else:
+            candidates = self.index["texts"]
+        
+        # 计算匹配分数
+        scored = []
+        for item in candidates:
+            score = 0
+            
+            # 标签匹配
+            item_tags = [t.lower() for t in item.get("tags", [])]
+            for kw in topic_keywords:
+                if any(kw in t for t in item_tags):
+                    score += 3
+            
+            # 描述匹配
+            desc = item.get("description", "").lower()
+            for kw in topic_keywords:
+                if kw in desc:
+                    score += 1
+            
+            # 效果加权（针对文案）
+            if prefer_high_performance and "performance" in item:
+                perf = item["performance"]
+                score += min(perf.get("likes", 0) / 100, 5)
+                score += min(perf.get("collects", 0) / 50, 5)
+            
+            # 使用次数（优先推荐未使用过的）
+            used = item.get("used_count", 0)
+            if used == 0:
+                score += 2
+            
+            if score > 0:
+                scored.append((score, item))
+        
+        # 排序返回
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [x[1] for x in scored[:limit]]
+    
     # ==================== 统计信息 ====================
     
     def get_stats(self) -> Dict[str, Any]:
         """获取素材库统计"""
         return {
             "total_images": len(self.index["images"]),
+            "total_videos": len(self.index.get("videos", [])),
             "total_texts": len(self.index["texts"]),
             "total_collections": len(self.index["collections"]),
             "tags": list(self.index["tags"].keys()),
@@ -430,6 +732,11 @@ class MaterialLibrary:
                 "title": len([t for t in self.index["texts"] if t.get("text_type") == "title"]),
                 "tag": len([t for t in self.index["texts"] if t.get("text_type") == "tag"]),
                 "hook": len([t for t in self.index["texts"] if t.get("text_type") == "hook"])
+            },
+            "sources": {
+                "upload": len([i for i in self.index["images"] if i.get("source") == "upload"]),
+                "xhs_collect": len([i for i in self.index["images"] if i.get("source") == "xhs_collect"]),
+                "ai_generate": len([i for i in self.index["images"] if i.get("source") == "ai_generate"])
             }
         }
 

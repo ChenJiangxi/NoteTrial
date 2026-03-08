@@ -91,21 +91,29 @@ class XiaohongshuCalibrator:
             if not await self._init_session():
                 return {}
         
-        result = await self._request({
-            "jsonrpc": "2.0",
-            "id": str(uuid.uuid4()),
-            "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": arguments or {}
-            }
-        })
-        
-        if "error" in result:
-            print(f"MCP 工具调用错误: {result['error']}")
-            return {}
-        
-        return result.get("result", {})
+        try:
+            print(f"[MCP] 调用工具: {tool_name}, 参数: {str(arguments)[:200]}...")
+            result = await self._request({
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,
+                    "arguments": arguments or {}
+                }
+            })
+            print(f"[MCP] 工具响应: {str(result)[:500]}")
+            
+            if "error" in result:
+                print(f"MCP 工具调用错误: {result['error']}")
+                return {}
+            
+            return result.get("result", {})
+        except Exception as e:
+            print(f"[MCP] 工具调用异常: {tool_name} - {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     async def check_mcp_status(self) -> bool:
         """检查 MCP 服务是否可用"""

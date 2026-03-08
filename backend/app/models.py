@@ -156,6 +156,7 @@ class ChatResponse(BaseModel):
     message: str
     task_spec: Optional[TaskSpec] = None
     generated_content: Optional[ContentItem] = None
+    action: str = "all"  # all=全部重新生成, text_only=只改文案, image_only=只换图片, none=仅对话
 
 
 class GenerateVariantRequest(BaseModel):
