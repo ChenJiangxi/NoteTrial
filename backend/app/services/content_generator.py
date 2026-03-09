@@ -35,7 +35,7 @@ class ContentGenerator:
         self,
         messages: List[ChatMessage],
         current_content: Optional[ContentItem] = None
-    ) -> Tuple[str, Optional[TaskSpec], Optional[ContentItem]]:
+    ) -> Tuple[str, Optional[TaskSpec], Optional[ContentItem], str]:
         """
         从对话中解析任务规格
         
@@ -266,7 +266,9 @@ class ContentGenerator:
         task_spec: TaskSpec,
         base_content: ContentItem,
         variant_type: str = "alternative",
-        reference_samples: List[dict] = None
+        reference_samples: List[dict] = None,
+        prompt_keywords: List[str] = None,
+        force_regenerate: bool = False,
     ) -> ContentItem:
         """
         基于现有内容生成变体版本
@@ -307,6 +309,26 @@ class ContentGenerator:
 5. 保持真实、接地气的语气，降低AI味
 """
         
+        keywords_section = ""
+        if prompt_keywords:
+            clean_keywords = [kw.strip() for kw in prompt_keywords if kw and kw.strip()]
+            if clean_keywords:
+                keywords_section = (
+                    "\n【关键词要求】\n"
+                    f"{' / '.join(clean_keywords[:6])}\n"
+                    "你必须基于这些新关键词对文案进行改写，而不是仅做微调。\n"
+                    "重点修改正文内容，围绕关键词重组正文结构与信息表达。\n"
+                    "至少自然融入 2 个关键词，避免堆砌。\n"
+                )
+
+        regenerate_section = ""
+        if force_regenerate:
+            regenerate_section = (
+                "\n【重生成约束】\n"
+                "这是一次基于新关键词的重生成，必须与基准版本有明显差异。\n"
+                "至少改动标题表达方式，并重写正文开头和结构。\n"
+            )
+
         prompt = f"""你是小红书资深创作者，擅长写出高赞爆款内容。
 
 【原始内容（Version A）】
@@ -318,6 +340,8 @@ class ContentGenerator:
 【优化目标】{goals_str}
 【语气要求】{', '.join(task_spec.tone_constraints) if task_spec.tone_constraints else '无特殊要求'}
 {reference_section}
+{keywords_section}
+{regenerate_section}
 【你的任务】
 基于原始内容的核心信息，重新创作一篇更有爆款潜力的Version B：
 - 用更吸引人的方式表达同样的内容
@@ -350,7 +374,7 @@ class ContentGenerator:
             return ContentItem(
                 title=result.get("title", base_content.title)[:20],
                 body=result.get("body", base_content.body)[:1000],
-                tags=result.get("tags", base_content.tags)
+                tags=self._dedupe_tags(result.get("tags", base_content.tags))
             )
             
         except Exception as e:
@@ -358,8 +382,21 @@ class ContentGenerator:
             return ContentItem(
                 title=f"【版本B】{base_content.title}"[:20],
                 body=base_content.body,
-                tags=base_content.tags
+                tags=self._dedupe_tags(base_content.tags)
             )
+
+    def _dedupe_tags(self, tags: Optional[List[str]]) -> List[str]:
+        if not tags:
+            return []
+        seen = set()
+        deduped: List[str] = []
+        for tag in tags:
+            clean = (tag or "").strip()
+            if not clean or clean in seen:
+                continue
+            seen.add(clean)
+            deduped.append(clean)
+        return deduped
     
     async def improve_content(
         self,

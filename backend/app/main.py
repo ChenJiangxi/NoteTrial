@@ -247,7 +247,9 @@ async def generate_variant(request: GenerateVariantRequest):
         request.task_spec,
         request.base_content,
         request.variant_type,
-        reference_samples=reference_samples
+        reference_samples=reference_samples,
+        prompt_keywords=request.mcp_keywords,
+        force_regenerate=bool(request.mcp_keywords),
     )
     
     return variant
@@ -301,9 +303,9 @@ async def start_crowdtest(request: MultiTestRequest):
                 calibration_hints=calibration_hints,
                 on_progress=on_progress,
             )
-            crowdtest_jobs[job_id]["status"] = "completed"
-            crowdtest_jobs[job_id]["progress"] = 100
             crowdtest_jobs[job_id]["result"] = result.model_dump()
+            crowdtest_jobs[job_id]["progress"] = 100
+            crowdtest_jobs[job_id]["status"] = "completed"
         except Exception as e:
             crowdtest_jobs[job_id]["status"] = "failed"
             crowdtest_jobs[job_id]["error"] = str(e)
