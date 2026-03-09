@@ -94,6 +94,15 @@ export interface StatisticalConfidence {
   confidence: number
 }
 
+export interface MCPEvidenceSignal {
+  score: number
+  sample_count: number
+  matched_keywords: string[]
+  matched_tags: string[]
+  reasons: string[]
+  source_keywords: string[]
+}
+
 export interface CrowdTestResult {
   version_a_score: EngagementScore
   version_b_score: EngagementScore
@@ -105,11 +114,16 @@ export interface CrowdTestResult {
   diagnosis: string[]
   suggestions: string[]
   persona_results: PersonaSimulationResult[]
+  version_evidence?: Record<string, MCPEvidenceSignal>
+  evaluation_mode?: string
 }
 
 export interface VersionScore {
   label: string
   score: EngagementScore
+  evidence_score?: number
+  composite_score?: number
+  mcp_evidence?: MCPEvidenceSignal
 }
 
 export interface MultiCrowdTestResult {
@@ -122,6 +136,8 @@ export interface MultiCrowdTestResult {
   diagnosis: string[]
   suggestions: string[]
   persona_results: PersonaSimulationResult[]
+  version_evidence?: Record<string, MCPEvidenceSignal>
+  evaluation_mode?: string
 }
 
 export interface GenerateVariantRequest {

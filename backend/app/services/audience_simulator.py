@@ -13,7 +13,7 @@ from statsmodels.stats.proportion import proportions_ztest
 from ..models import (
     TaskSpec, ContentItem, PersonaSimulationResult,
     EngagementScore, StatisticalConfidence, CrowdTestResult, OptimizationGoal,
-    MultiCrowdTestResult, VersionScore
+    MultiCrowdTestResult, VersionScore, MCPEvidenceSignal
 )
 from ..config import get_settings
 
@@ -62,7 +62,8 @@ class AudienceSimulator:
         persona: Dict[str, str], 
         content: ContentItem, 
         task_spec: TaskSpec,
-        calibration_hints: List[str] = None
+        calibration_hints: List[str] = None,
+        external_evidence: Dict[str, Any] = None,
     ) -> str:
         """构建单个用户模拟的提示词"""
         
@@ -71,6 +72,18 @@ class AudienceSimulator:
             calibration_context = f"""
 【小红书平台特征参考】
 {chr(10).join(f'- {hint}' for hint in calibration_hints)}
+"""
+
+        evidence_context = ""
+        if external_evidence:
+            evidence_reasons = external_evidence.get("reasons", [])[:3]
+            evidence_keywords = external_evidence.get("matched_keywords", [])[:5]
+            evidence_score = external_evidence.get("score", 0)
+            evidence_context = f"""
+【来自小红书 MCP 的外部证据】
+- 该内容与真实热门样本的贴合度评分: {evidence_score}/100
+- 命中的热门关键词: {', '.join(evidence_keywords) if evidence_keywords else '无明显命中'}
+{chr(10).join(f'- {item}' for item in evidence_reasons)}
 """
         
         prompt = f"""你正在模拟一个小红书用户浏览首页的场景。
@@ -84,6 +97,7 @@ class AudienceSimulator:
 正文：{content.body}
 标签：{', '.join(content.tags) if content.tags else '无'}
 {calibration_context}
+{evidence_context}
 【任务】
 作为这个用户画像，决定你对这篇笔记的互动行为。
 
@@ -101,6 +115,7 @@ class AudienceSimulator:
 2. 大多数用户对大多数内容不会有太多互动，请保持真实
 3. 收藏行为在小红书上相对常见（如果内容实用）
 4. 评论和分享的门槛较高
+5. 上面的 MCP 证据来自真实平台样本，可以作为外部参考，但不要机械照搬
 """
         return prompt
     
@@ -109,10 +124,13 @@ class AudienceSimulator:
         persona: Dict[str, str],
         content: ContentItem,
         task_spec: TaskSpec,
-        calibration_hints: List[str] = None
+        calibration_hints: List[str] = None,
+        external_evidence: Dict[str, Any] = None
     ) -> PersonaSimulationResult:
         """模拟单个用户对内容的反应"""
-        prompt = self._build_simulation_prompt(persona, content, task_spec, calibration_hints)
+        prompt = self._build_simulation_prompt(
+            persona, content, task_spec, calibration_hints, external_evidence
+        )
         
         try:
             completion = await self.client.chat.completions.create(
@@ -154,6 +172,7 @@ class AudienceSimulator:
         max_users: int = 20,
         audience_tags: List[str] = None,
         calibration_hints: List[str] = None,
+        version_evidence: Dict[str, Dict[str, Any]] = None,
         on_progress: callable = None
     ) -> CrowdTestResult:
         """
@@ -187,8 +206,12 @@ class AudienceSimulator:
             for run in range(runs_per_persona):
                 # 并行模拟A和B
                 result_a, result_b = await asyncio.gather(
-                    self._simulate_single_user(persona, content_a, task_spec, calibration_hints),
-                    self._simulate_single_user(persona, content_b, task_spec, calibration_hints)
+                    self._simulate_single_user(
+                        persona, content_a, task_spec, calibration_hints, (version_evidence or {}).get("A")
+                    ),
+                    self._simulate_single_user(
+                        persona, content_b, task_spec, calibration_hints, (version_evidence or {}).get("B")
+                    )
                 )
                 all_results_a.append(result_a)
                 all_results_b.append(result_b)
@@ -207,11 +230,36 @@ class AudienceSimulator:
         save_conf = self._calc_confidence(total_users, score_a.save_count, score_b.save_count)
         comment_conf = self._calc_confidence(total_users, score_a.comment_count, score_b.comment_count)
         share_conf = self._calc_confidence(total_users, score_a.share_count, score_b.share_count)
-        overall_conf = self._calc_confidence(total_users, score_a.total, score_b.total)
+        overall_conf = self._calc_multi_confidence(
+            total_users,
+            {
+                "A": self._blend_score(score_a.total, (version_evidence or {}).get("A")),
+                "B": self._blend_score(score_b.total, (version_evidence or {}).get("B")),
+            },
+        )
         
         # 生成诊断和建议
-        diagnosis = await self._generate_diagnosis(task_spec, content_a, content_b, score_a, score_b, all_results_a, all_results_b)
-        suggestions = await self._generate_suggestions(task_spec, content_a, content_b, score_a, score_b, calibration_hints)
+        diagnosis = await self._generate_diagnosis(
+            task_spec,
+            content_a,
+            content_b,
+            score_a,
+            score_b,
+            all_results_a,
+            all_results_b,
+            (version_evidence or {}).get("A"),
+            (version_evidence or {}).get("B"),
+        )
+        loser_label = "A" if score_a.total < score_b.total else "B"
+        suggestions = await self._generate_suggestions(
+            task_spec,
+            content_a,
+            content_b,
+            score_a,
+            score_b,
+            calibration_hints,
+            (version_evidence or {}).get(loser_label),
+        )
         
         # 合并persona结果
         combined_results = []
@@ -229,7 +277,8 @@ class AudienceSimulator:
             overall_confidence=overall_conf,
             diagnosis=diagnosis,
             suggestions=suggestions,
-            persona_results=combined_results
+            persona_results=combined_results,
+            version_evidence=version_evidence or {},
         )
 
     async def simulate_multi_test(
@@ -239,6 +288,7 @@ class AudienceSimulator:
         max_users: int = 20,
         audience_tags: List[str] = None,
         calibration_hints: List[str] = None,
+        version_evidence: Dict[str, Dict[str, Any]] = None,
         on_progress: callable = None
     ) -> MultiCrowdTestResult:
         """Multi-version simulation for direct comparison."""
@@ -275,7 +325,13 @@ class AudienceSimulator:
             for _ in range(runs_per_persona):
                 results = await asyncio.gather(
                     *[
-                        self._simulate_single_user(persona, version_map[label], task_spec, calibration_hints)
+                        self._simulate_single_user(
+                            persona,
+                            version_map[label],
+                            task_spec,
+                            calibration_hints,
+                            (version_evidence or {}).get(label),
+                        )
                         for label in version_labels
                     ]
                 )
@@ -295,18 +351,27 @@ class AudienceSimulator:
                 if on_progress:
                     await on_progress(completed, total_runs)
 
-        version_scores = [
-            VersionScore(label=label, score=self._calculate_score(results_by_label[label]))
-            for label in version_labels
-        ]
-        version_scores_sorted = sorted(version_scores, key=lambda v: v.score.total, reverse=True)
+        version_scores = []
+        for label in version_labels:
+            raw_score = self._calculate_score(results_by_label[label])
+            evidence = (version_evidence or {}).get(label)
+            version_scores.append(
+                VersionScore(
+                    label=label,
+                    score=raw_score,
+                    evidence_score=float((evidence or {}).get("score", 0.0)),
+                    composite_score=self._blend_score(raw_score.total, evidence),
+                    mcp_evidence=evidence,
+                )
+            )
+        version_scores_sorted = sorted(version_scores, key=lambda v: v.composite_score, reverse=True)
 
         users = len(next(iter(results_by_label.values()))) if results_by_label else 0
         like_conf = self._calc_multi_confidence(users, {v.label: v.score.like_count for v in version_scores})
         save_conf = self._calc_multi_confidence(users, {v.label: v.score.save_count for v in version_scores})
         comment_conf = self._calc_multi_confidence(users, {v.label: v.score.comment_count for v in version_scores})
         share_conf = self._calc_multi_confidence(users, {v.label: v.score.share_count for v in version_scores})
-        overall_conf = self._calc_multi_confidence(users, {v.label: v.score.total for v in version_scores})
+        overall_conf = self._calc_multi_confidence(users, {v.label: v.composite_score for v in version_scores})
 
         diagnosis: List[str] = []
         suggestions: List[str] = []
@@ -323,6 +388,8 @@ class AudienceSimulator:
                 second.score,
                 results_by_label[top.label],
                 results_by_label[second.label],
+                (version_evidence or {}).get(top.label),
+                (version_evidence or {}).get(second.label),
             )
             suggestions = await self._generate_suggestions(
                 task_spec,
@@ -331,6 +398,7 @@ class AudienceSimulator:
                 top.score,
                 second.score,
                 calibration_hints,
+                (version_evidence or {}).get(second.label),
             )
 
         return MultiCrowdTestResult(
@@ -343,6 +411,7 @@ class AudienceSimulator:
             diagnosis=diagnosis,
             suggestions=suggestions,
             persona_results=combined_results,
+            version_evidence=version_evidence or {},
         )
     
     def _calculate_score(self, results: List[PersonaSimulationResult]) -> EngagementScore:
@@ -360,6 +429,11 @@ class AudienceSimulator:
             total=like_count + save_count + comment_count + share_count
         )
     
+    def _blend_score(self, llm_total: float, evidence: Dict[str, Any] = None) -> float:
+        """Combine LLM interactions with MCP evidence for final comparison."""
+        evidence_score = float((evidence or {}).get("score", 0.0))
+        return round(float(llm_total) + evidence_score * 0.2, 2)
+
     def _calc_confidence(self, users: int, vote_a: int, vote_b: int) -> StatisticalConfidence:
         """计算统计置信度 (基于 viral-predictor 的逻辑)"""
         if vote_a == 0 and vote_b == 0:
@@ -404,7 +478,7 @@ class AudienceSimulator:
             else:
                 return StatisticalConfidence(winner="B", confidence=(vote_b / total_votes) * 100)
     
-    def _calc_multi_confidence(self, users: int, counts: Dict[str, int]) -> StatisticalConfidence:
+    def _calc_multi_confidence(self, users: int, counts: Dict[str, float]) -> StatisticalConfidence:
         """Compute confidence for multi-version by comparing top-2."""
         if not counts:
             return StatisticalConfidence(winner="-", confidence=0.0)
@@ -418,9 +492,15 @@ class AudienceSimulator:
         if top_count == second_count:
             return StatisticalConfidence(winner="-", confidence=50.0)
 
-        base = self._calc_confidence(users, top_count, second_count)
-        winner = top_label if base.winner == "A" else second_label
-        return StatisticalConfidence(winner=winner, confidence=base.confidence)
+        if all(float(value).is_integer() for value in counts.values()):
+            base = self._calc_confidence(users, int(top_count), int(second_count))
+            winner = top_label if base.winner == "A" else second_label
+            return StatisticalConfidence(winner=winner, confidence=base.confidence)
+
+        gap = max(float(top_count) - float(second_count), 0.0)
+        denom = max(float(top_count), 1.0)
+        confidence = min(99.0, 50.0 + (gap / denom) * 50.0)
+        return StatisticalConfidence(winner=top_label, confidence=confidence)
 
     async def _generate_diagnosis(
         self,
@@ -430,7 +510,9 @@ class AudienceSimulator:
         score_a: EngagementScore,
         score_b: EngagementScore,
         results_a: List[PersonaSimulationResult],
-        results_b: List[PersonaSimulationResult]
+        results_b: List[PersonaSimulationResult],
+        evidence_a: Dict[str, Any] = None,
+        evidence_b: Dict[str, Any] = None
     ) -> List[str]:
         """生成诊断解释"""
         winner = "A" if score_a.total > score_b.total else "B"
@@ -442,6 +524,8 @@ class AudienceSimulator:
         # 收集用户反馈理由
         winner_results = results_a if winner == "A" else results_b
         positive_reasons = [r.reasoning for r in winner_results if r.save or r.like][:3]
+        winner_evidence = evidence_a if winner == "A" else evidence_b
+        loser_evidence_data = evidence_b if winner == "A" else evidence_a
         
         # 处理多目标
         goals_str = ', '.join([g.value for g in task_spec.goals]) if task_spec.goals else 'maximize_save'
@@ -464,6 +548,11 @@ class AudienceSimulator:
 
 【用户反馈摘要】
 {chr(10).join(f'- {r}' for r in positive_reasons)}
+
+【MCP 外部证据】
+- 胜出版本证据分: {(winner_evidence or {}).get('score', 0)}
+- 落后版本证据分: {(loser_evidence_data or {}).get('score', 0)}
+{chr(10).join(f"- {item}" for item in (winner_evidence or {}).get('reasons', [])[:3])}
 
 请输出JSON格式：
 {{
@@ -498,7 +587,8 @@ class AudienceSimulator:
         content_b: ContentItem,
         score_a: EngagementScore,
         score_b: EngagementScore,
-        calibration_hints: List[str] = None
+        calibration_hints: List[str] = None,
+        loser_evidence: Dict[str, Any] = None
     ) -> List[str]:
         """生成改写建议"""
         loser = "A" if score_a.total < score_b.total else "B"
@@ -509,6 +599,12 @@ class AudienceSimulator:
             calibration_context = f"""
 【小红书平台校准提示】
 {chr(10).join(f'- {hint}' for hint in calibration_hints)}
+"""
+        if loser_evidence:
+            calibration_context += f"""
+【MCP 外部证据】
+- 当前版本证据分: {loser_evidence.get('score', 0)}
+{chr(10).join(f"- {item}" for item in loser_evidence.get('reasons', [])[:3])}
 """
         
         # 处理多目标

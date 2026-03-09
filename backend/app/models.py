@@ -107,12 +107,17 @@ class CrowdTestResult(BaseModel):
     
     # 详细的persona结果
     persona_results: List[PersonaSimulationResult]
+    version_evidence: Dict[str, Any] = Field(default_factory=dict)
+    evaluation_mode: str = "llm_plus_mcp"
 
 
 class VersionScore(BaseModel):
     """多版本得分"""
     label: str
     score: EngagementScore
+    evidence_score: float = 0.0
+    composite_score: float = 0.0
+    mcp_evidence: Optional[Dict[str, Any]] = None
 
 
 class MultiCrowdTestResult(BaseModel):
@@ -126,6 +131,8 @@ class MultiCrowdTestResult(BaseModel):
     diagnosis: List[str]
     suggestions: List[str]
     persona_results: List[PersonaSimulationResult]
+    version_evidence: Dict[str, Any] = Field(default_factory=dict)
+    evaluation_mode: str = "llm_plus_mcp"
 
 
 class CalibrationData(BaseModel):
@@ -137,6 +144,16 @@ class CalibrationData(BaseModel):
     avg_like_save_ratio: float
     common_tags: List[str]
     sample_count: int
+
+
+class MCPEvidenceSignal(BaseModel):
+    """External evidence derived from Xiaohongshu MCP samples."""
+    score: float = 0.0
+    sample_count: int = 0
+    matched_keywords: List[str] = Field(default_factory=list)
+    matched_tags: List[str] = Field(default_factory=list)
+    reasons: List[str] = Field(default_factory=list)
+    source_keywords: List[str] = Field(default_factory=list)
 
 
 class ChatMessage(BaseModel):

@@ -7,12 +7,19 @@ import {
 } from 'lucide-react'
 import { useApp } from './contexts/AppContext'
 import { healthCheck, sendChatMessage, generateVariant, startCrowdTest, getCrowdTestProgress, publishContent, generateImage, generateOutline } from './services/api'
-import type { ContentItem, CrowdTestResult, PageImage } from './types/api'
+import type { ContentItem, MultiCrowdTestResult, PageImage } from './types/api'
 import WelcomePage from './components/WelcomePage'
 import AutoModePage from './components/AutoModePage'
 
 // 应用模式类型
 type AppMode = 'welcome' | 'interactive' | 'auto'
+type VersionCard = {
+  id: string
+  label: string
+  content: ContentItem
+  colorTheme: 'blue' | 'red'
+  locked?: boolean
+}
 
 // 分隔条组件
 function Resizer({ onDrag, side }: { onDrag: (delta: number) => void; side: 'left' | 'right' }) {
@@ -78,13 +85,16 @@ function App() {
   const [isConnected, setIsConnected] = useState(false)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [isGeneratingB, setIsGeneratingB] = useState(false)
-  const [testResult, setTestResult] = useState<CrowdTestResult | null>(null)
+  const [showTestPanel, setShowTestPanel] = useState(false)
+  const [extraVersions, setExtraVersions] = useState<VersionCard[]>([])
+  const [generatingVersionId, setGeneratingVersionId] = useState<string | null>(null)
+  const [testResult, setTestResult] = useState<MultiCrowdTestResult | null>(null)
   const [isRunningTest, setIsRunningTest] = useState(false)
   const [simulationProgress, setSimulationProgress] = useState(0)
   const [isPublishing, setIsPublishing] = useState(false)
   const audiencePresets = ['核心用户', '泛兴趣用户', '实用派', '互动派', '传播派']
   const [selectedAudienceTags, setSelectedAudienceTags] = useState<string[]>(audiencePresets)
+  const [selectedTestVersions, setSelectedTestVersions] = useState<string[]>(['Version A', 'Version B'])
   const [customAudienceInput, setCustomAudienceInput] = useState('')
   const [customAudienceTags, setCustomAudienceTags] = useState<string[]>([])
   const [uploadedFile, setUploadedFile] = useState<{ name: string; content: string; type?: string } | null>(null)
@@ -106,6 +116,12 @@ function App() {
     setRightWidth(w => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, w + delta)))
   }, [])
 
+  const allVersions: VersionCard[] = [
+    { id: 'A', label: 'Version A', content: contentA, colorTheme: 'blue', locked: true },
+    { id: 'B', label: 'Version B', content: contentB, colorTheme: 'red', locked: true },
+    ...extraVersions,
+  ]
+
   // 检查服务连接
   useEffect(() => {
     const check = async () => {
@@ -125,6 +141,14 @@ function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    setSelectedTestVersions(prev => {
+      const labels = allVersions.map(version => version.label)
+      const next = prev.filter(label => labels.includes(label))
+      return next.length > 0 ? next : labels.slice(0, 2)
+    })
+  }, [contentA, contentB, extraVersions])
 
   // 发送消息
   const handleSend = async () => {
@@ -277,27 +301,15 @@ function App() {
     e.target.value = ''
   }
 
-  // 生成版本B
-  const handleGenerateB = async () => {
-    if (!taskSpec || !contentA.title) return
-    setIsGeneratingB(true)
-    try {
-      const variant = await generateVariant({
-        task_spec: taskSpec,
-        base_content: contentA,
-        variant_type: 'alternative',
-      })
-      setContentB(variant)
-    } catch (error) {
-      console.error('生成变体失败:', error)
-    } finally {
-      setIsGeneratingB(false)
-    }
-  }
-
   // 运行测试
   const handleRunTest = async () => {
-    if (!taskSpec || !contentA.title || !contentB.title) return
+    if (!taskSpec) return
+    const versionsForTest = allVersions.filter(version => selectedTestVersions.includes(version.label))
+    const validVersions = versionsForTest.filter(version => version.content.title && version.content.body)
+    if (validVersions.length < 2) {
+      alert('请至少选择两个已填写标题和正文的版本进行测试')
+      return
+    }
     setIsRunningTest(true)
     setSimulationProgress(0)
     setTestResult(null)
@@ -312,8 +324,10 @@ function App() {
 
       const payload = {
         task_spec: taskSpecForTest,
-        content_a: contentA,
-        content_b: contentB,
+        versions: validVersions.map(version => ({
+          label: version.label,
+          content: version.content,
+        })),
         max_users: 20,
         audience_tags: audienceOverrides,
       }
@@ -360,9 +374,71 @@ function App() {
     setCustomAudienceTags(prev => prev.filter(t => t !== tag))
   }
 
+  const getNextVersionLabel = () => `Version ${String.fromCharCode(65 + allVersions.length)}`
+
+  const handleAddEmptyVersion = () => {
+    const label = getNextVersionLabel()
+    const newVersion: VersionCard = {
+      id: `extra-${Date.now()}`,
+      label,
+      content: { title: '', body: '', tags: [] },
+      colorTheme: allVersions.length % 2 === 0 ? 'blue' : 'red',
+    }
+    setExtraVersions(prev => [...prev, newVersion])
+    setSelectedTestVersions(prev => [...prev, label])
+  }
+
+  const handleGenerateExtraVersion = async () => {
+    if (!taskSpec || !contentA.title) {
+      alert('请先准备好 Version A 内容')
+      return
+    }
+
+    const label = getNextVersionLabel()
+    setGeneratingVersionId(label)
+    try {
+      const variant = await generateVariant({
+        task_spec: taskSpec,
+        base_content: contentA,
+        variant_type: 'alternative',
+      })
+      const newVersion: VersionCard = {
+        id: `extra-${Date.now()}`,
+        label,
+        content: variant,
+        colorTheme: allVersions.length % 2 === 0 ? 'blue' : 'red',
+      }
+      setExtraVersions(prev => [...prev, newVersion])
+      setSelectedTestVersions(prev => [...prev, label])
+    } catch (error) {
+      console.error('生成额外版本失败:', error)
+    } finally {
+      setGeneratingVersionId(null)
+    }
+  }
+
+  const updateExtraVersion = (id: string, content: ContentItem) => {
+    setExtraVersions(prev => prev.map(version => (
+      version.id === id ? { ...version, content } : version
+    )))
+  }
+
+  const removeExtraVersion = (id: string) => {
+    const target = extraVersions.find(version => version.id === id)
+    setExtraVersions(prev => prev.filter(version => version.id !== id))
+    if (target) {
+      setSelectedTestVersions(prev => prev.filter(label => label !== target.label))
+    }
+  }
+
+  const toggleTestVersion = (label: string) => {
+    setSelectedTestVersions(prev => (
+      prev.includes(label) ? prev.filter(item => item !== label) : [...prev, label]
+    ))
+  }
+
   // 发布
-  const handlePublish = async (version: 'A' | 'B') => {
-    const content = version === 'A' ? contentA : contentB
+  const handlePublishVersion = async (label: string, content: ContentItem) => {
     if (!content.title || !content.body) {
       alert('请先填写标题和正文')
       return
@@ -371,7 +447,7 @@ function App() {
       alert('请先添加封面图片')
       return
     }
-    if (!confirm(`确定要发布版本 ${version} 吗？`)) return
+    if (!confirm(`确定要发布 ${label} 吗？`)) return
     
     setIsPublishing(true)
     try {
@@ -392,8 +468,11 @@ function App() {
     setMessages([{ role: 'assistant', content: '👋 你好！我是 NoteTrial 助手。\n\n告诉我想测试什么内容，例如：\n• 程序员副业指南\n• 美食探店文案\n• 护肤品种草\n\n你可以上传产品资料，我会帮你生成更准确的内容。' }])
     setContentA({ title: '', body: '', tags: [] })
     setContentB({ title: '', body: '', tags: [] })
+    setExtraVersions([])
+    setSelectedTestVersions(['Version A', 'Version B'])
     setTaskSpec(null)
     setTestResult(null)
+    setShowTestPanel(false)
   }
 
   // 处理模式选择
@@ -445,6 +524,13 @@ function App() {
               {isConnected ? '系统正常' : '连接中断'}
             </span>
           </div>
+          <button
+            onClick={() => setShowTestPanel(v => !v)}
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+          >
+            <BarChart3 className="w-3.5 h-3.5" />
+            {showTestPanel ? '收起模拟测试' : '展开模拟测试'}
+          </button>
           <button onClick={handleReset} className="text-xs font-medium text-slate-500 hover:text-[#ff2442] transition-colors">
             新建项目
           </button>
@@ -626,29 +712,49 @@ function App() {
             </div>
             
             <div className="flex items-center gap-3">
-              {/* 暂时隐藏版本B生成按钮 */}
+              <button
+                onClick={handleAddEmptyVersion}
+                className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                新增版本
+              </button>
+              <button
+                onClick={handleGenerateExtraVersion}
+                disabled={!taskSpec || !contentA.title || generatingVersionId !== null}
+                className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-white bg-[#ff2442] hover:bg-[#e61f3d] rounded-lg transition-colors disabled:opacity-50"
+              >
+                {generatingVersionId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                基于 A 生成新版本
+              </button>
             </div>
           </div>
           
           <div className="flex-1 overflow-hidden p-6">
-            <div className="h-full max-w-5xl mx-auto overflow-y-auto">
-              <EditorCard
-                version="A"
-                label="Version A"
-                content={contentA}
-                onChange={setContentA}
-                onPublish={() => handlePublish('A')}
-                isPublishing={isPublishing}
-                colorTheme="blue"
-              />
+            <div className="h-full max-w-5xl mx-auto overflow-y-auto space-y-6">
+              {allVersions.map(version => (
+                <EditorCard
+                  key={version.id}
+                  label={version.label}
+                  content={version.content}
+                  onChange={(content) => {
+                    if (version.id === 'A') setContentA(content)
+                    else if (version.id === 'B') setContentB(content)
+                    else updateExtraVersion(version.id, content)
+                  }}
+                  onPublish={() => handlePublishVersion(version.label, version.content)}
+                  isPublishing={isPublishing}
+                  colorTheme={version.colorTheme}
+                  onRemove={version.locked ? undefined : () => removeExtraVersion(version.id)}
+                />
+              ))}
             </div>
           </div>
         </div>
         
-        {/* 暂时隐藏右侧测试面板和分隔条 */}
-        {false && <Resizer onDrag={handleRightResize} side="right" />}
+        {showTestPanel && <Resizer onDrag={handleRightResize} side="right" />}
 
-        {false && <div 
+        {showTestPanel && <div 
           className="border-l border-slate-200 bg-white flex flex-col" 
           style={{ width: rightWidth, flexShrink: 0, flexGrow: 0 }}
         >
@@ -658,11 +764,44 @@ function App() {
                 <Play className="w-4 h-4 text-[#ff2442]" />
                 <span className="font-semibold text-sm">模拟测试</span>
               </div>
+              <button
+                onClick={() => setShowTestPanel(false)}
+                className="p-1 rounded-md hover:bg-slate-200 transition-colors"
+                title="收起模拟测试"
+              >
+                <X className="w-4 h-4 text-slate-500" />
+              </button>
             </div>
             
             <div className="flex-1 overflow-y-auto p-5 scrollbar-thin scrollbar-thumb-slate-200">
               <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 mb-6">
                 <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">操作</h3>
+                <div className="mb-4">
+                  <p className="text-xs text-slate-500 mb-2">选择要参与测试的版本（至少 2 个）</p>
+                  <div className="space-y-2">
+                    {allVersions.map(version => {
+                      const checked = selectedTestVersions.includes(version.label)
+                      const ready = Boolean(version.content.title && version.content.body)
+                      return (
+                        <button
+                          key={version.id}
+                          type="button"
+                          onClick={() => toggleTestVersion(version.label)}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs transition-all ${
+                            checked
+                              ? 'bg-red-50 border-red-300 text-[#ff2442]'
+                              : 'bg-white border-slate-200 text-slate-600'
+                          }`}
+                        >
+                          <span>{version.label}</span>
+                          <span className={ready ? 'text-emerald-600' : 'text-amber-500'}>
+                            {ready ? '已就绪' : '未完成'}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
                 <div className="mb-3">
                   <p className="text-xs text-slate-500 mb-2">默认测试人群标签（可多选）</p>
                   <div className="flex flex-wrap gap-2">
@@ -727,7 +866,7 @@ function App() {
                 </div>
                 <button
                   onClick={handleRunTest}
-                  disabled={!contentA.title || !contentB.title || isRunningTest}
+                  disabled={isRunningTest || selectedTestVersions.length < 2}
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#ff2442] text-white text-sm font-medium rounded-lg hover:bg-[#e61f3d] shadow-sm shadow-red-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isRunningTest ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
@@ -767,9 +906,8 @@ function App() {
 // ----------------------------------------------------------------------------
 
 function EditorCard({ 
-  label, content, onChange, onPublish, isPublishing, isEmpty, onGenerate, isGenerating, colorTheme
+  label, content, onChange, onPublish, isPublishing, isEmpty, onGenerate, isGenerating, colorTheme, onRemove
 }: { 
-  version: 'A' | 'B'
   label: string
   content: ContentItem
   onChange: (c: ContentItem) => void
@@ -779,6 +917,7 @@ function EditorCard({
   onGenerate?: () => void
   isGenerating?: boolean
   colorTheme: 'blue' | 'red'
+  onRemove?: () => void
 }) {
   const [activeTab, setActiveTab] = useState<'upload' | 'url' | 'search'>('upload')
   const [showImgMgr, setShowImgMgr] = useState(false)
@@ -1339,6 +1478,15 @@ function EditorCard({
               <div className="flex items-center gap-2">
                 <span className={`text-sm font-bold ${theme.accent}`}>{label}</span>
                 <span className="text-xs text-slate-400">· {pages.length} 页</span>
+                {onRemove && (
+                  <button
+                    onClick={onRemove}
+                    className="p-1 rounded-md hover:bg-slate-200 transition-colors"
+                    title={`删除 ${label}`}
+                  >
+                    <X className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600" />
+                  </button>
+                )}
               </div>
               <div className="flex gap-2 items-center">
                 <button 
@@ -1418,66 +1566,78 @@ function ImageSearchPanel({ onSelect, query }: { onSelect: (url: string) => void
   )
 }
 
-function TestResultPanel({ result }: { result: CrowdTestResult }) {
+function TestResultPanel({ result }: { result: MultiCrowdTestResult }) {
+  const versionA = result.version_scores.find(v => v.label === 'Version A')
+  const versionB = result.version_scores.find(v => v.label === 'Version B')
+  const scoreA = versionA?.score ?? { like_count: 0, save_count: 0, comment_count: 0, share_count: 0, total: 0 }
+  const scoreB = versionB?.score ?? { like_count: 0, save_count: 0, comment_count: 0, share_count: 0, total: 0 }
+
   return (
     <div className="space-y-6">
-      {/* 胜出者卡片 */}
       <div className="bg-gradient-to-br from-[#ff2442] to-[#e61f3d] rounded-xl p-4 text-white shadow-md shadow-red-200">
         <div className="flex items-center gap-2 mb-2 opacity-90">
-             <Sparkles className="w-4 h-4 text-white" />
-             <span className="text-xs font-bold uppercase tracking-wide">获胜版本</span>
+          <Sparkles className="w-4 h-4 text-white" />
+          <span className="text-xs font-bold uppercase tracking-wide">获胜版本</span>
         </div>
         <div className="text-2xl font-bold mb-1">
-          Version {result.overall_confidence.winner}
+          {result.overall_confidence.winner === '-' ? '结果接近' : result.overall_confidence.winner}
         </div>
         <div className="text-xs opacity-80 leading-relaxed">
-          综合表现优于对照组 {result.overall_confidence.confidence.toFixed(0)}%
+          综合表现置信度 {result.overall_confidence.confidence.toFixed(0)}%
         </div>
       </div>
 
-       {/* Detailed Stats */}
-        <div className="space-y-3">
-          <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
-             <BarChart3 className="w-3 h-3" /> 数据对比
-          </h4>
-         <StatBar label="点赞数 (Likes)" scoreA={result.version_a_score.like_count} scoreB={result.version_b_score.like_count} totalUsers={result.persona_results.length} />
-         <StatBar label="收藏数 (Saves)" scoreA={result.version_a_score.save_count} scoreB={result.version_b_score.save_count} totalUsers={result.persona_results.length} />
-          <StatBar label="评论数 (Comments)" scoreA={result.version_a_score.comment_count} scoreB={result.version_b_score.comment_count} totalUsers={result.persona_results.length} />
-          <StatBar label="分享数 (Shares)" scoreA={result.version_a_score.share_count} scoreB={result.version_b_score.share_count} totalUsers={result.persona_results.length} />
-          <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-xs text-slate-600 flex items-center justify-between">
-            <span>总体置信度 (Overall)</span>
-            <span className="font-semibold text-slate-700">
-              Version {result.overall_confidence.winner} · {result.overall_confidence.confidence.toFixed(0)}%
-            </span>
-          </div>
+      <div className="space-y-3">
+        <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
+          <BarChart3 className="w-3 h-3" /> 数据对比
+        </h4>
+        {versionA && versionB && (
+          <>
+            <StatBar label="点赞数 (Likes)" scoreA={scoreA.like_count} scoreB={scoreB.like_count} totalUsers={result.persona_results.length} />
+            <StatBar label="收藏数 (Saves)" scoreA={scoreA.save_count} scoreB={scoreB.save_count} totalUsers={result.persona_results.length} />
+            <StatBar label="评论数 (Comments)" scoreA={scoreA.comment_count} scoreB={scoreB.comment_count} totalUsers={result.persona_results.length} />
+            <StatBar label="分享数 (Shares)" scoreA={scoreA.share_count} scoreB={scoreB.share_count} totalUsers={result.persona_results.length} />
+          </>
+        )}
+        <div className="space-y-2">
+          {result.version_scores.map((version, index) => (
+            <div key={version.label} className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-xs text-slate-600">
+              <div className="flex items-center justify-between mb-1">
+                <div className="font-medium text-slate-700">{index + 1}. {version.label}</div>
+                <div className="text-slate-500">综合分 {(version.composite_score ?? 0).toFixed(1)}</div>
+              </div>
+              <div>互动总分 {version.score.total} · MCP 证据分 {(version.evidence_score ?? 0).toFixed(1)}</div>
+              <div className="mt-1 text-slate-500">{version.mcp_evidence?.reasons?.[0] || '暂无外部证据说明'}</div>
+            </div>
+          ))}
         </div>
-       
-       {/* 模拟用户反馈 */}
-       <div className="space-y-3">
-          <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
-             <UserCircle2 className="w-3 h-3" /> 模拟用户声音
-          </h4>
-          <div className="space-y-3">
-             {result.suggestions.slice(0,2).map((s,i) => (
-               <div key={i} className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs">
-                 <div className="flex items-center gap-2 mb-1">
-                    <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[10px] text-slate-500 font-bold">U{i+1}</div>
-                    <span className="text-slate-400 scale-75">just now</span>
-                 </div>
-                 <p className="text-slate-600 leading-normal">{s}</p>
-               </div>
-             ))}
-          </div>
-       </div>
+      </div>
 
-       <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
-          <h4 className="text-xs font-semibold text-amber-700 mb-1">改进建议</h4>
-          <ul className="list-disc pl-4 space-y-1">
-             {result.diagnosis.slice(0,3).map((d, i) => (
-                <li key={i} className="text-xs text-amber-700 leading-normal">{d}</li>
-             ))}
-          </ul>
-       </div>
+      <div className="space-y-3">
+        <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
+          <UserCircle2 className="w-3 h-3" /> 模拟用户反馈
+        </h4>
+        <div className="space-y-3">
+          {result.suggestions.slice(0, 2).map((s, i) => (
+            <div key={i} className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[10px] text-slate-500 font-bold">U{i + 1}</div>
+                <span className="text-slate-400 scale-75">simulated</span>
+              </div>
+              <p className="text-slate-600 leading-normal">{s}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
+        <h4 className="text-xs font-semibold text-amber-700 mb-1">结果诊断</h4>
+        <ul className="list-disc pl-4 space-y-1">
+          {result.diagnosis.slice(0, 3).map((d, i) => (
+            <li key={i} className="text-xs text-amber-700 leading-normal">{d}</li>
+          ))}
+        </ul>
+      </div>
     </div>
   )
 }

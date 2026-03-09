@@ -11,7 +11,7 @@ import uuid
 from typing import List, Dict, Any, Optional
 from collections import Counter
 
-from ..models import CalibrationData
+from ..models import CalibrationData, ContentItem, MCPEvidenceSignal
 from ..config import get_settings
 
 
@@ -329,6 +329,165 @@ class XiaohongshuCalibrator:
             hints.append(f"以上分析基于{calibration_data.sample_count}条热门内容样本")
         
         return hints
+
+    def _extract_note_title(self, sample: Dict[str, Any]) -> str:
+        note_card = sample.get("noteCard", {}) if isinstance(sample, dict) else {}
+        return sample.get("title") or note_card.get("displayTitle") or note_card.get("title") or ""
+
+    def _extract_note_body(self, sample: Dict[str, Any]) -> str:
+        note_card = sample.get("noteCard", {}) if isinstance(sample, dict) else {}
+        return (
+            note_card.get("desc")
+            or note_card.get("description")
+            or sample.get("desc")
+            or sample.get("content")
+            or ""
+        )
+
+    def _extract_note_tags(self, sample: Dict[str, Any]) -> List[str]:
+        tags: List[str] = []
+        note_card = sample.get("noteCard", {}) if isinstance(sample, dict) else {}
+        for raw in [sample.get("tags"), note_card.get("tagList"), note_card.get("tags")]:
+            if not isinstance(raw, list):
+                continue
+            for item in raw:
+                if isinstance(item, str):
+                    tags.append(item.strip())
+                elif isinstance(item, dict):
+                    name = item.get("name") or item.get("tagName") or item.get("text")
+                    if name:
+                        tags.append(str(name).strip())
+        return [tag for tag in tags if tag]
+
+    def _extract_keywords(self, text: str) -> List[str]:
+        if not text:
+            return []
+
+        tokens: List[str] = []
+        for chunk in re.findall(r"[\u4e00-\u9fffA-Za-z0-9]+", text.lower()):
+            if len(chunk) < 2:
+                continue
+            if re.fullmatch(r"[a-z0-9]+", chunk):
+                tokens.append(chunk)
+                continue
+            if re.fullmatch(r"[\u4e00-\u9fff]+", chunk):
+                if len(chunk) <= 4:
+                    tokens.append(chunk)
+                else:
+                    for width in (2, 3, 4):
+                        for i in range(0, len(chunk) - width + 1):
+                            tokens.append(chunk[i:i + width])
+                continue
+            tokens.append(chunk)
+
+        deduped: List[str] = []
+        for token in tokens:
+            if token not in deduped:
+                deduped.append(token)
+        return deduped[:60]
+
+    def _matches_pattern(self, title: str, pattern: str) -> bool:
+        if not title or not pattern:
+            return False
+        if "数字" in pattern:
+            return bool(re.match(r"^[0-9一二三四五六七八九十]+", title))
+        if "问题" in pattern:
+            return "?" in title or "？" in title or "吗" in title[:10]
+        if "感叹" in pattern:
+            return "!" in title or "！" in title
+        if "对比" in pattern:
+            return "vs" in title.lower() or "对比" in title or "还是" in title
+        if "结果" in pattern:
+            return any(word in title for word in ["终于", "成功", "实现", "达到"])
+        if "痛点" in pattern:
+            return any(word in title for word in ["别再", "不要", "避坑", "踩雷"])
+        return False
+
+    def evaluate_content_with_samples(
+        self,
+        content: ContentItem,
+        samples: List[Dict[str, Any]],
+        topic: str = "",
+        source_keywords: Optional[List[str]] = None,
+    ) -> MCPEvidenceSignal:
+        """Build an evidence score from MCP samples instead of relying only on LLM judgement."""
+        keywords = [kw for kw in (source_keywords or []) if kw]
+        if not samples:
+            return MCPEvidenceSignal(
+                score=0.0,
+                sample_count=0,
+                reasons=["未拿到可用的小红书样本，当前只保留模型模拟结果。"],
+                source_keywords=keywords or ([topic] if topic else []),
+            )
+
+        titles = [self._extract_note_title(sample) for sample in samples if self._extract_note_title(sample)]
+        avg_title_length = sum(len(title) for title in titles) / len(titles) if titles else 15.0
+        common_patterns = self._analyze_opening_patterns(titles) if titles else []
+        emoji_usage_rate = (
+            sum(1 for title in titles if self._contains_emoji(title)) / len(titles)
+            if titles else 0.5
+        )
+        common_tags = [
+            tag for tag, _ in Counter(
+                tag
+                for sample in samples
+                for tag in self._extract_note_tags(sample)
+            ).most_common(10)
+        ]
+
+        sample_keywords = Counter()
+        for sample in samples:
+            merged = " ".join(
+                [
+                    self._extract_note_title(sample),
+                    self._extract_note_body(sample),
+                    " ".join(self._extract_note_tags(sample)),
+                ]
+            )
+            sample_keywords.update(self._extract_keywords(merged))
+
+        content_keywords = set(
+            self._extract_keywords(" ".join([content.title, content.body, " ".join(content.tags or [])]))
+        )
+        hot_keywords = [word for word, _ in sample_keywords.most_common(20)]
+        hot_keyword_set = set(hot_keywords)
+        provided_keyword_set = set(self._extract_keywords(" ".join(keywords)))
+        matched_keywords = sorted((content_keywords & hot_keyword_set) | (content_keywords & provided_keyword_set))
+        matched_tags = sorted(set(content.tags or []) & set(common_tags))
+
+        title_gap = abs(len(content.title) - avg_title_length)
+        title_score = max(0.0, 22.0 - min(title_gap, 22.0))
+        pattern_score = 15.0 if any(self._matches_pattern(content.title, pattern) for pattern in common_patterns[:3]) else 0.0
+        emoji_score = 8.0 if self._contains_emoji(content.title) == (emoji_usage_rate >= 0.45) else 3.0
+        tag_score = min(20.0, len(matched_tags) * 7.0)
+        keyword_score = min(25.0, len(matched_keywords) * 4.0)
+        practical_score = 10.0 if any(mark in content.body for mark in ["1.", "2.", "3.", "步骤", "清单", "总结", "建议"]) else 4.0
+
+        reasons: List[str] = [f"MCP 对比了 {len(samples)} 条小红书样本。"]
+        if matched_keywords:
+            reasons.append(f"命中热门关键词：{', '.join(matched_keywords[:5])}")
+        if matched_tags:
+            reasons.append(f"命中热门标签：{', '.join(matched_tags[:5])}")
+        if any(self._matches_pattern(content.title, pattern) for pattern in common_patterns[:3]):
+            reasons.append("标题结构贴近热门样本常见开头。")
+        else:
+            reasons.append("标题结构与热门样本仍有差距。")
+        if title_gap <= 3:
+            reasons.append("标题长度接近热门样本均值。")
+
+        total_score = round(
+            min(100.0, title_score + pattern_score + emoji_score + tag_score + keyword_score + practical_score),
+            1,
+        )
+
+        return MCPEvidenceSignal(
+            score=total_score,
+            sample_count=len(samples),
+            matched_keywords=matched_keywords[:10],
+            matched_tags=matched_tags[:10],
+            reasons=reasons[:5],
+            source_keywords=keywords or ([topic] if topic else []),
+        )
     
     async def publish_content(self, content) -> Dict[str, Any]:
         """发布内容到小红书

@@ -267,6 +267,66 @@ async def _get_crowdtest_calibration_hints(task_spec: TaskSpec) -> list[str]:
         return []
 
 
+async def _build_crowdtest_version_evidence(
+    task_spec: TaskSpec,
+    versions: list[tuple[str, ContentItem]],
+) -> dict[str, dict]:
+    """Build MCP-backed evidence for each version from shared Xiaohongshu samples."""
+    if not calibrator:
+        return {}
+
+    keyword_candidates: list[str] = []
+    if task_spec.topic and task_spec.topic.strip():
+        keyword_candidates.append(task_spec.topic.strip())
+    if task_spec.audience and task_spec.audience.strip():
+        keyword_candidates.append(task_spec.audience.strip().split("/")[0].strip())
+
+    for _, content in versions:
+        if content.title and content.title.strip():
+            keyword_candidates.append(content.title.strip()[:12])
+        keyword_candidates.extend([tag.strip() for tag in content.tags if tag and tag.strip()])
+
+    dedup_keywords: list[str] = []
+    for keyword in keyword_candidates:
+        if keyword and keyword not in dedup_keywords:
+            dedup_keywords.append(keyword)
+
+    sample_pool: list[dict] = []
+    seen_ids: set[str] = set()
+    for keyword in dedup_keywords[:4]:
+        try:
+            samples = await calibrator.search_topic_samples(keyword, limit=8)
+        except Exception as e:
+            print(f"[CrowdTest] MCP sample search failed for {keyword}: {e}")
+            continue
+
+        for sample in samples:
+            sample_id = str(sample.get("id") or sample.get("noteCard", {}).get("noteId") or "")
+            if sample_id and sample_id in seen_ids:
+                continue
+            if sample_id:
+                seen_ids.add(sample_id)
+            sample_pool.append(sample)
+
+        if len(sample_pool) >= 24:
+            break
+
+    if not sample_pool:
+        return {}
+
+    evidence_by_label: dict[str, dict] = {}
+    for label, content in versions:
+        evidence = calibrator.evaluate_content_with_samples(
+            content=content,
+            samples=sample_pool,
+            topic=task_spec.topic,
+            source_keywords=dedup_keywords,
+        )
+        evidence_by_label[label] = evidence.model_dump()
+
+    return evidence_by_label
+
+
 @app.post("/api/crowdtest/start")
 async def start_crowdtest(request: MultiTestRequest):
     """启动带进度的 CrowdTest 异步任务"""
@@ -295,12 +355,14 @@ async def start_crowdtest(request: MultiTestRequest):
             if len(request.versions) < 2:
                 raise ValueError("At least two versions are required for comparison")
             versions = [(v.label, v.content) for v in request.versions]
+            version_evidence = await _build_crowdtest_version_evidence(request.task_spec, versions)
             result = await simulator.simulate_multi_test(
                 task_spec=request.task_spec,
                 versions=versions,
                 max_users=request.max_users,
                 audience_tags=request.audience_tags,
                 calibration_hints=calibration_hints,
+                version_evidence=version_evidence,
                 on_progress=on_progress,
             )
             crowdtest_jobs[job_id]["result"] = result.model_dump()
@@ -352,12 +414,14 @@ async def run_crowdtest(request: MultiTestRequest):
         raise HTTPException(status_code=400, detail="At least two versions are required for comparison")
 
     versions = [(v.label, v.content) for v in request.versions]
+    version_evidence = await _build_crowdtest_version_evidence(request.task_spec, versions)
     result = await simulator.simulate_multi_test(
         task_spec=request.task_spec,
         versions=versions,
         max_users=request.max_users,
         audience_tags=request.audience_tags,
         calibration_hints=calibration_hints,
+        version_evidence=version_evidence,
     )
     
     return result

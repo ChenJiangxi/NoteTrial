@@ -34,9 +34,12 @@ export default function CrowdTestPanel({ taskSpec, contentA, contentB }: CrowdTe
 
   const canRun = taskSpec && contentA.title && contentA.body && contentB.title && contentB.body
   const emptyScore = { like_count: 0, save_count: 0, comment_count: 0, share_count: 0, total: 0 }
-  const scoreA = result?.version_scores.find(v => v.label === 'Version A')?.score ?? emptyScore
-  const scoreB = result?.version_scores.find(v => v.label === 'Version B')?.score ?? emptyScore
-  const winnerLabel = result?.overall_confidence.winner || '-'
+  const versionA = result?.version_scores.find(v => v.label === 'Version A')
+  const versionB = result?.version_scores.find(v => v.label === 'Version B')
+  const scoreA = versionA?.score ?? emptyScore
+  const scoreB = versionB?.score ?? emptyScore
+  const evidenceA = versionA?.mcp_evidence
+  const evidenceB = versionB?.mcp_evidence
 
   const handleRunTest = async () => {
     if (!canRun || !taskSpec) return
@@ -266,6 +269,22 @@ export default function CrowdTestPanel({ taskSpec, contentA, contentB }: CrowdTe
                 <div className="bg-white/80 rounded-xl p-4 text-center border border-blue-100">
                   <p className="text-xs text-gray-500 mb-1">版本 B 总互动</p>
                   <p className="text-3xl font-bold text-blue-500">{scoreB.total}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mt-3">
+                <div className="bg-white/70 rounded-xl p-3 border border-red-100">
+                  <p className="text-xs text-gray-500 mb-1">Version A MCP 证据分</p>
+                  <p className="text-lg font-semibold text-red-500">{(versionA?.evidence_score ?? 0).toFixed(1)}</p>
+                  {evidenceA?.reasons?.[0] && (
+                    <p className="text-xs text-gray-500 mt-1">{evidenceA.reasons[0]}</p>
+                  )}
+                </div>
+                <div className="bg-white/70 rounded-xl p-3 border border-blue-100">
+                  <p className="text-xs text-gray-500 mb-1">Version B MCP 证据分</p>
+                  <p className="text-lg font-semibold text-blue-500">{(versionB?.evidence_score ?? 0).toFixed(1)}</p>
+                  {evidenceB?.reasons?.[0] && (
+                    <p className="text-xs text-gray-500 mt-1">{evidenceB.reasons[0]}</p>
+                  )}
                 </div>
               </div>
             </div>
