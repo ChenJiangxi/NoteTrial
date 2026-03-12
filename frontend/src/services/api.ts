@@ -45,12 +45,21 @@ export async function startCrowdTest(request: MultiTestRequest): Promise<{
 // 查询 CrowdTest 任务进度
 export async function getCrowdTestProgress(jobId: string): Promise<{
   job_id: string
-  status: 'running' | 'completed' | 'failed'
+  status: 'running' | 'completed' | 'failed' | 'cancelled'
   progress: number
   result?: MultiCrowdTestResult
   error?: string
 }> {
   const response = await api.get(`/crowdtest/progress/${jobId}`)
+  return response.data
+}
+
+export async function cancelCrowdTest(jobId: string): Promise<{
+  job_id: string
+  status: 'cancelled' | 'completed' | 'failed'
+  message?: string
+}> {
+  const response = await api.post(`/crowdtest/cancel/${jobId}`)
   return response.data
 }
 

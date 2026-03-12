@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
 import asyncio
+import re
 import uuid
 
 from .config import get_settings
@@ -267,60 +268,142 @@ async def _get_crowdtest_calibration_hints(task_spec: TaskSpec) -> list[str]:
         return []
 
 
+def _normalize_search_keyword(value: str) -> str:
+    if not value:
+        return ""
+    normalized = str(value).strip()
+    normalized = normalized.replace("#", "").replace("＃", "")
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip()
+
+
+def _is_generic_search_keyword(keyword: str) -> bool:
+    normalized = _normalize_search_keyword(keyword)
+    generic_terms = {
+        "节日限定",
+        "限定版",
+        "校园生活",
+        "纪念品",
+        "攻略",
+        "推荐",
+        "打卡",
+        "合集",
+        "分享",
+        "日常",
+    }
+    return not normalized or normalized in generic_terms or len(normalized) < 2
+
+
+def _extract_title_search_phrases(title: str) -> list[str]:
+    if not title:
+        return []
+
+    normalized = re.sub(r"[，。！？!?:：；;、/|]+", " ", title.strip())
+    phrases = [part.strip() for part in normalized.split() if 2 <= len(part.strip()) <= 16]
+    if phrases:
+        return phrases[:2]
+
+    compact = _normalize_search_keyword(title)
+    if 2 <= len(compact) <= 16:
+        return [compact]
+
+    split_parts = [
+        part.strip()
+        for part in re.split(r"[的了和与及就都又还很也把被让给在去用将要想会能并或]", compact)
+        if 2 <= len(part.strip()) <= 16
+    ]
+    if split_parts:
+        return split_parts[:2]
+
+    return [compact[:16]] if compact else []
+
+
+def _build_version_search_keywords(
+    task_spec: TaskSpec,
+    content: ContentItem,
+) -> list[str]:
+    topic = _normalize_search_keyword(task_spec.topic or "")
+    audience = _normalize_search_keyword((task_spec.audience or "").split("/")[0])
+    tags = [
+        _normalize_search_keyword(tag)
+        for tag in (content.tags or [])
+        if _normalize_search_keyword(tag) and not _is_generic_search_keyword(tag)
+    ]
+    title_phrases = _extract_title_search_phrases(content.title or "")
+
+    candidate_groups = [
+        [topic] if topic else [],
+        title_phrases,
+        tags,
+        [audience] if audience and 2 <= len(audience) <= 12 else [],
+    ]
+
+    selected: list[str] = []
+    for group in candidate_groups:
+        for keyword in group:
+            if keyword and keyword not in selected:
+                selected.append(keyword)
+            if len(selected) >= 4:
+                return selected
+    return selected
+
+
+def _sample_id(sample: dict) -> str:
+    return str(sample.get("id") or sample.get("noteCard", {}).get("noteId") or "")
+
+
+def _sample_engagement_rank(sample: dict) -> float:
+    if not calibrator:
+        return 0.0
+    metrics = calibrator._extract_interact_metrics(sample)
+    return (
+        metrics["likes"] * 1.0
+        + metrics["collects"] * 1.4
+        + metrics["comments"] * 1.8
+        + metrics["shares"] * 1.6
+    )
+
+
 async def _build_crowdtest_version_evidence(
     task_spec: TaskSpec,
     versions: list[tuple[str, ContentItem]],
 ) -> dict[str, dict]:
-    """Build MCP-backed evidence for each version from shared Xiaohongshu samples."""
+    """Build MCP-backed evidence for each version from its own Xiaohongshu sample pool."""
     if not calibrator:
-        return {}
-
-    keyword_candidates: list[str] = []
-    if task_spec.topic and task_spec.topic.strip():
-        keyword_candidates.append(task_spec.topic.strip())
-    if task_spec.audience and task_spec.audience.strip():
-        keyword_candidates.append(task_spec.audience.strip().split("/")[0].strip())
-
-    for _, content in versions:
-        if content.title and content.title.strip():
-            keyword_candidates.append(content.title.strip()[:12])
-        keyword_candidates.extend([tag.strip() for tag in content.tags if tag and tag.strip()])
-
-    dedup_keywords: list[str] = []
-    for keyword in keyword_candidates:
-        if keyword and keyword not in dedup_keywords:
-            dedup_keywords.append(keyword)
-
-    sample_pool: list[dict] = []
-    seen_ids: set[str] = set()
-    for keyword in dedup_keywords[:4]:
-        try:
-            samples = await calibrator.search_topic_samples(keyword, limit=8)
-        except Exception as e:
-            print(f"[CrowdTest] MCP sample search failed for {keyword}: {e}")
-            continue
-
-        for sample in samples:
-            sample_id = str(sample.get("id") or sample.get("noteCard", {}).get("noteId") or "")
-            if sample_id and sample_id in seen_ids:
-                continue
-            if sample_id:
-                seen_ids.add(sample_id)
-            sample_pool.append(sample)
-
-        if len(sample_pool) >= 24:
-            break
-
-    if not sample_pool:
         return {}
 
     evidence_by_label: dict[str, dict] = {}
     for label, content in versions:
+        version_keywords = _build_version_search_keywords(task_spec, content)
+        sample_pool: list[dict] = []
+        seen_ids: set[str] = set()
+
+        for keyword in version_keywords[:4]:
+            try:
+                samples = await calibrator.search_topic_samples(keyword, limit=10)
+            except Exception as e:
+                print(f"[CrowdTest] MCP sample search failed for {label} / {keyword}: {e}")
+                continue
+
+            for sample in samples:
+                sample_id = _sample_id(sample)
+                if sample_id and sample_id in seen_ids:
+                    continue
+                if sample_id:
+                    seen_ids.add(sample_id)
+                sample_pool.append(sample)
+
+        if not sample_pool:
+            continue
+
+        ranked_pool = sorted(sample_pool, key=_sample_engagement_rank, reverse=True)
+        limited_pool = ranked_pool[:24]
         evidence = calibrator.evaluate_content_with_samples(
             content=content,
-            samples=sample_pool,
+            samples=limited_pool,
             topic=task_spec.topic,
-            source_keywords=dedup_keywords,
+            source_keywords=version_keywords,
+            goals=task_spec.goals,
         )
         evidence_by_label[label] = evidence.model_dump()
 
@@ -345,6 +428,8 @@ async def start_crowdtest(request: MultiTestRequest):
         job = crowdtest_jobs.get(job_id)
         if not job:
             return
+        if job.get("status") == "cancelled":
+            raise asyncio.CancelledError("CrowdTest cancelled by user")
         total_safe = max(total, 1)
         pct = int((completed / total_safe) * 100)
         job["progress"] = min(99, max(0, pct))
@@ -368,12 +453,34 @@ async def start_crowdtest(request: MultiTestRequest):
             crowdtest_jobs[job_id]["result"] = result.model_dump()
             crowdtest_jobs[job_id]["progress"] = 100
             crowdtest_jobs[job_id]["status"] = "completed"
+        except asyncio.CancelledError:
+            crowdtest_jobs[job_id]["status"] = "cancelled"
+            crowdtest_jobs[job_id]["error"] = "cancelled"
         except Exception as e:
             crowdtest_jobs[job_id]["status"] = "failed"
             crowdtest_jobs[job_id]["error"] = str(e)
 
     asyncio.create_task(worker())
     return {"job_id": job_id, "status": "running"}
+
+
+@app.post("/api/crowdtest/cancel/{job_id}")
+async def cancel_crowdtest(job_id: str):
+    """取消正在执行的 CrowdTest 异步任务"""
+    job = crowdtest_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if job["status"] in {"completed", "failed", "cancelled"}:
+        return {
+            "job_id": job_id,
+            "status": job["status"],
+            "message": "任务已结束，无需取消",
+        }
+
+    job["status"] = "cancelled"
+    job["error"] = "cancelled"
+    return {"job_id": job_id, "status": "cancelled"}
 
 
 @app.get("/api/crowdtest/progress/{job_id}")

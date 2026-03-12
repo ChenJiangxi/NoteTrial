@@ -11,7 +11,7 @@ import uuid
 from typing import List, Dict, Any, Optional
 from collections import Counter
 
-from ..models import CalibrationData, ContentItem, MCPEvidenceSignal
+from ..models import CalibrationData, ContentItem, MCPEvidenceSignal, OptimizationGoal
 from ..config import get_settings
 
 
@@ -344,6 +344,17 @@ class XiaohongshuCalibrator:
             or ""
         )
 
+    def _extract_inline_tags(self, text: str) -> List[str]:
+        if not text:
+            return []
+
+        tags: List[str] = []
+        for match in re.findall(r"[#\uFF03]([^\s#\uFF03,，。！？!?:：；;、/]{2,20})", text):
+            cleaned = str(match).strip()
+            if cleaned:
+                tags.append(cleaned)
+        return tags
+
     def _extract_note_tags(self, sample: Dict[str, Any]) -> List[str]:
         tags: List[str] = []
         note_card = sample.get("noteCard", {}) if isinstance(sample, dict) else {}
@@ -357,13 +368,87 @@ class XiaohongshuCalibrator:
                     name = item.get("name") or item.get("tagName") or item.get("text")
                     if name:
                         tags.append(str(name).strip())
-        return [tag for tag in tags if tag]
+
+        tags.extend(self._extract_inline_tags(self._extract_note_title(sample)))
+        tags.extend(self._extract_inline_tags(self._extract_note_body(sample)))
+
+        deduped: List[str] = []
+        normalized_seen = set()
+        for tag in tags:
+            normalized = self._normalize_tag(tag)
+            if normalized and normalized not in normalized_seen:
+                normalized_seen.add(normalized)
+                deduped.append(str(tag).strip())
+        return deduped
+
+    def _normalize_tag(self, tag: str) -> str:
+        if not tag:
+            return ""
+        normalized = str(tag).strip().lower()
+        normalized = normalized.replace("#", "").replace("?", "")
+        normalized = re.sub(r"\s+", "", normalized)
+        return normalized
+
+    def _match_tags(self, content_tags: List[str], sample_tags: List[str]) -> List[str]:
+        if not content_tags or not sample_tags:
+            return []
+
+        normalized_sample_tags = {
+            self._normalize_tag(tag): tag for tag in sample_tags if self._normalize_tag(tag)
+        }
+        matched: List[str] = []
+        for raw_tag in content_tags:
+            normalized_tag = self._normalize_tag(raw_tag)
+            if not normalized_tag:
+                continue
+            for sample_normalized, sample_raw in normalized_sample_tags.items():
+                if (
+                    normalized_tag == sample_normalized
+                    or normalized_tag in sample_normalized
+                    or sample_normalized in normalized_tag
+                ):
+                    matched.append(sample_raw)
+                    break
+
+        deduped: List[str] = []
+        for tag in matched:
+            if tag not in deduped:
+                deduped.append(tag)
+        return deduped
+
+    def _match_terms(self, content_terms: List[str], sample_terms: List[str]) -> List[str]:
+        if not content_terms or not sample_terms:
+            return []
+
+        normalized_sample_terms = {
+            self._normalize_tag(term): term for term in sample_terms if self._normalize_tag(term)
+        }
+        matched: List[str] = []
+        for raw_term in content_terms:
+            normalized_term = self._normalize_tag(raw_term)
+            if not normalized_term:
+                continue
+            for sample_normalized, sample_raw in normalized_sample_terms.items():
+                if (
+                    normalized_term == sample_normalized
+                    or normalized_term in sample_normalized
+                    or sample_normalized in normalized_term
+                ):
+                    matched.append(sample_raw)
+                    break
+
+        deduped: List[str] = []
+        for term in matched:
+            if term not in deduped:
+                deduped.append(term)
+        return deduped
 
     def _extract_keywords(self, text: str) -> List[str]:
         if not text:
             return []
 
         tokens: List[str] = []
+        tokens.extend(self._extract_inline_tags(text))
         for chunk in re.findall(r"[\u4e00-\u9fffA-Za-z0-9]+", text.lower()):
             if len(chunk) < 2:
                 continue
@@ -371,17 +456,23 @@ class XiaohongshuCalibrator:
                 tokens.append(chunk)
                 continue
             if re.fullmatch(r"[\u4e00-\u9fff]+", chunk):
-                if len(chunk) <= 4:
+                if len(chunk) <= 16:
                     tokens.append(chunk)
                 else:
-                    for width in (2, 3, 4):
-                        for i in range(0, len(chunk) - width + 1):
-                            tokens.append(chunk[i:i + width])
+                    parts = re.split(r"[\u7684\u4e86\u548c\u4e0e\u53ca\u5c31\u90fd\u53c8\u8fd8\u5f88\u4e5f\u628a\u88ab\u8ba9\u7ed9\u5728\u53bb\u7528\u5c06\u8981\u60f3\u4f1a\u80fd\u5e76\u6216]", chunk)
+                    cleaned_parts = [part.strip() for part in parts if 2 <= len(part.strip()) <= 16]
+                    if cleaned_parts:
+                        tokens.extend(cleaned_parts)
+                    else:
+                        tokens.append(chunk[:16])
                 continue
             tokens.append(chunk)
 
         deduped: List[str] = []
         for token in tokens:
+            token = str(token).strip()
+            if len(token) < 2:
+                continue
             if token not in deduped:
                 deduped.append(token)
         return deduped[:60]
@@ -403,18 +494,93 @@ class XiaohongshuCalibrator:
             return any(word in title for word in ["别再", "不要", "避坑", "踩雷"])
         return False
 
+    def _parse_count(self, value: Any) -> int:
+        if isinstance(value, (int, float)):
+            return int(value)
+        if not isinstance(value, str):
+            return 0
+
+        text = value.strip().lower().replace(",", "")
+        if not text:
+            return 0
+        try:
+            if "万" in text:
+                return int(float(text.replace("万", "")) * 10000)
+            if text.endswith("w"):
+                return int(float(text[:-1]) * 10000)
+            if text.endswith("k"):
+                return int(float(text[:-1]) * 1000)
+            return int(float(text))
+        except Exception:
+            return 0
+
+    def _extract_interact_metrics(self, sample: Dict[str, Any]) -> Dict[str, int]:
+        note_card = sample.get("noteCard", {}) if isinstance(sample, dict) else {}
+        interact = sample.get("interactInfo") or note_card.get("interactInfo") or {}
+        likes = self._parse_count(interact.get("likedCount", sample.get("likedCount", 0)))
+        collects = self._parse_count(interact.get("collectedCount", sample.get("collectedCount", 0)))
+        comments = self._parse_count(interact.get("commentCount", sample.get("commentCount", 0)))
+        shares = self._parse_count(
+            interact.get("sharedCount", interact.get("shareCount", sample.get("shareCount", sample.get("sharedCount", 0))))
+        )
+        return {
+            "likes": likes,
+            "collects": collects,
+            "comments": comments,
+            "shares": shares,
+        }
+
+    def _score_sample_relevance(
+        self,
+        content: ContentItem,
+        content_keywords: set[str],
+        sample: Dict[str, Any],
+        common_patterns: List[str],
+    ) -> tuple[float, Dict[str, Any]]:
+        title = self._extract_note_title(sample)
+        body = self._extract_note_body(sample)
+        tags = self._extract_note_tags(sample)
+        sample_keywords = set(self._extract_keywords(" ".join([title, body, " ".join(tags)])))
+        keyword_overlap = content_keywords & sample_keywords
+        matched_tags = self._match_tags(content.tags or [], tags)
+        pattern_match = any(
+            self._matches_pattern(content.title, pattern) and self._matches_pattern(title, pattern)
+            for pattern in common_patterns[:3]
+        )
+        practical_match = any(mark in content.body for mark in ["1.", "2.", "3.", "姝ラ", "娓呭崟", "鎬荤粨", "寤鸿"]) and any(
+            mark in body for mark in ["1.", "2.", "3.", "姝ラ", "娓呭崟", "鎬荤粨", "寤鸿"]
+        )
+
+        score = len(keyword_overlap) * 3.0 + len(matched_tags) * 4.0
+        if pattern_match:
+            score += 3.0
+        if practical_match:
+            score += 2.0
+
+        return score, {
+            "sample": sample,
+            "metrics": self._extract_interact_metrics(sample),
+            "keyword_overlap": keyword_overlap,
+            "matched_tags": matched_tags,
+        }
+
     def evaluate_content_with_samples(
         self,
         content: ContentItem,
         samples: List[Dict[str, Any]],
         topic: str = "",
         source_keywords: Optional[List[str]] = None,
+        goals: Optional[List[OptimizationGoal]] = None,
     ) -> MCPEvidenceSignal:
         """Build an evidence score from MCP samples instead of relying only on LLM judgement."""
         keywords = [kw for kw in (source_keywords or []) if kw]
+        goal_values = [goal.value if isinstance(goal, OptimizationGoal) else str(goal) for goal in (goals or [])]
         if not samples:
             return MCPEvidenceSignal(
                 score=0.0,
+                content_fit_score=0.0,
+                engagement_reference_score=0.0,
+                goal_alignment_score=0.0,
                 sample_count=0,
                 reasons=["未拿到可用的小红书样本，当前只保留模型模拟结果。"],
                 source_keywords=keywords or ([topic] if topic else []),
@@ -446,45 +612,142 @@ class XiaohongshuCalibrator:
             )
             sample_keywords.update(self._extract_keywords(merged))
 
-        content_keywords = set(
-            self._extract_keywords(" ".join([content.title, content.body, " ".join(content.tags or [])]))
-        )
+        content_keyword_list = self._extract_keywords(" ".join([content.title, content.body, " ".join(content.tags or [])]))
+        content_keywords = set(content_keyword_list)
         hot_keywords = [word for word, _ in sample_keywords.most_common(20)]
-        hot_keyword_set = set(hot_keywords)
-        provided_keyword_set = set(self._extract_keywords(" ".join(keywords)))
-        matched_keywords = sorted((content_keywords & hot_keyword_set) | (content_keywords & provided_keyword_set))
-        matched_tags = sorted(set(content.tags or []) & set(common_tags))
+        provided_keyword_list = self._extract_keywords(" ".join(keywords))
+        matched_keywords = self._match_terms(content_keyword_list, hot_keywords + provided_keyword_list)
+        matched_tags = self._match_tags(content.tags or [], common_tags)
+
+        scored_samples = [
+            self._score_sample_relevance(content, content_keywords, sample, common_patterns)
+            for sample in samples
+        ]
+        scored_samples.sort(key=lambda item: item[0], reverse=True)
+        relevant_sample_infos = [info for score, info in scored_samples if score > 0]
+        if not relevant_sample_infos:
+            fallback_count = min(max(3, len(samples) // 3), len(scored_samples))
+            relevant_sample_infos = [info for _, info in scored_samples[:fallback_count]]
+        keyword_counter = Counter()
+        tag_counter = Counter()
+        for info in relevant_sample_infos:
+            keyword_counter.update(info.get("keyword_overlap", []))
+            tag_counter.update(info.get("matched_tags", []))
+        if keyword_counter:
+            matched_keywords = [keyword for keyword, _ in keyword_counter.most_common(10)]
+        if tag_counter:
+            matched_tags = [tag for tag, _ in tag_counter.most_common(10)]
+        relevant_metrics = [info["metrics"] for info in relevant_sample_infos]
 
         title_gap = abs(len(content.title) - avg_title_length)
         title_score = max(0.0, 22.0 - min(title_gap, 22.0))
-        pattern_score = 15.0 if any(self._matches_pattern(content.title, pattern) for pattern in common_patterns[:3]) else 0.0
+        pattern_hit = any(self._matches_pattern(content.title, pattern) for pattern in common_patterns[:3])
+        pattern_score = 15.0 if pattern_hit else 0.0
         emoji_score = 8.0 if self._contains_emoji(content.title) == (emoji_usage_rate >= 0.45) else 3.0
         tag_score = min(20.0, len(matched_tags) * 7.0)
         keyword_score = min(25.0, len(matched_keywords) * 4.0)
-        practical_score = 10.0 if any(mark in content.body for mark in ["1.", "2.", "3.", "步骤", "清单", "总结", "建议"]) else 4.0
-
-        reasons: List[str] = [f"MCP 对比了 {len(samples)} 条小红书样本。"]
-        if matched_keywords:
-            reasons.append(f"命中热门关键词：{', '.join(matched_keywords[:5])}")
-        if matched_tags:
-            reasons.append(f"命中热门标签：{', '.join(matched_tags[:5])}")
-        if any(self._matches_pattern(content.title, pattern) for pattern in common_patterns[:3]):
-            reasons.append("标题结构贴近热门样本常见开头。")
-        else:
-            reasons.append("标题结构与热门样本仍有差距。")
-        if title_gap <= 3:
-            reasons.append("标题长度接近热门样本均值。")
-
-        total_score = round(
+        practical_hit = any(mark in content.body for mark in ["1.", "2.", "3.", "步骤", "清单", "总结", "建议"])
+        practical_score = 10.0 if practical_hit else 4.0
+        content_fit_score = round(
             min(100.0, title_score + pattern_score + emoji_score + tag_score + keyword_score + practical_score),
             1,
         )
 
+        avg_likes = round(sum(item["likes"] for item in relevant_metrics) / len(relevant_metrics), 1)
+        avg_collects = round(sum(item["collects"] for item in relevant_metrics) / len(relevant_metrics), 1)
+        avg_comments = round(sum(item["comments"] for item in relevant_metrics) / len(relevant_metrics), 1)
+        avg_shares = round(sum(item["shares"] for item in relevant_metrics) / len(relevant_metrics), 1)
+        top_sample_metrics = {
+            "likes": float(max((item["likes"] for item in relevant_metrics), default=0)),
+            "collects": float(max((item["collects"] for item in relevant_metrics), default=0)),
+            "comments": float(max((item["comments"] for item in relevant_metrics), default=0)),
+            "shares": float(max((item["shares"] for item in relevant_metrics), default=0)),
+        }
+
+        high_performance_samples = []
+        for info in relevant_sample_infos:
+            sample = info["sample"]
+            metrics = info["metrics"]
+            total = metrics["likes"] + metrics["collects"] * 1.2 + metrics["comments"] * 1.5 + metrics["shares"] * 1.8
+            high_performance_samples.append((sample, metrics, total))
+        high_performance_samples.sort(key=lambda item: item[2], reverse=True)
+        top_samples = high_performance_samples[: max(3, min(8, len(high_performance_samples) // 2 or 1))]
+
+        top_keyword_counter = Counter()
+        top_tag_counter = Counter()
+        top_pattern_hits = 0
+        top_practical_hits = 0
+        for sample, _, _ in top_samples:
+            merged = " ".join(
+                [
+                    self._extract_note_title(sample),
+                    self._extract_note_body(sample),
+                    " ".join(self._extract_note_tags(sample)),
+                ]
+            )
+            top_keyword_counter.update(self._extract_keywords(merged))
+            top_tag_counter.update(self._extract_note_tags(sample))
+            if any(self._matches_pattern(self._extract_note_title(sample), pattern) for pattern in common_patterns[:3]):
+                top_pattern_hits += 1
+            if any(mark in self._extract_note_body(sample) for mark in ["1.", "2.", "3.", "步骤", "清单", "总结", "建议"]):
+                top_practical_hits += 1
+
+        top_keywords = {word for word, _ in top_keyword_counter.most_common(20)}
+        top_tags = {tag for tag, _ in top_tag_counter.most_common(10)}
+        high_perf_keyword_hits = len(content_keywords & top_keywords)
+        high_perf_tag_hits = len(self._match_tags(content.tags or [], list(top_tags)))
+        engagement_reference_score = round(
+            min(
+                100.0,
+                high_perf_keyword_hits * 6.0
+                + high_perf_tag_hits * 8.0
+                + (12.0 if pattern_hit and top_pattern_hits > 0 else 4.0)
+                + (12.0 if practical_hit and top_practical_hits > 0 else 4.0),
+            ),
+            1,
+        )
+
+        goal_alignment_score = 0.0
+        if goal_values:
+            goal_score_map = {
+                "maximize_like": min(35.0, high_perf_keyword_hits * 6.0 + (10.0 if pattern_hit else 0.0)),
+                "maximize_save": min(35.0, high_perf_tag_hits * 8.0 + (12.0 if practical_hit else 0.0)),
+                "maximize_comment": min(35.0, high_perf_keyword_hits * 4.0 + (12.0 if "?" in content.title or "为什么" in content.title or "你会" in content.title else 0.0)),
+                "maximize_share": min(35.0, high_perf_tag_hits * 5.0 + (12.0 if practical_hit or "避坑" in content.title or "清单" in content.title else 0.0)),
+            }
+            goal_alignment_score = round(
+                sum(goal_score_map.get(goal, 0.0) for goal in goal_values) / max(len(goal_values), 1),
+                1,
+            )
+
+        weighted_total = content_fit_score * 0.45 + engagement_reference_score * 0.30
+        weight_sum = 0.75
+        if goal_values:
+            weighted_total += goal_alignment_score * 0.25
+            weight_sum += 0.25
+        total_score = round(min(100.0, weighted_total / max(weight_sum, 1e-6)), 1)
+
+        reasons: List[str] = []
+        if matched_tags:
+            reasons.append("标签表达与热门样本存在重合。")
+        if engagement_reference_score >= 70:
+            reasons.append("内容特征与高互动样本较接近。")
+        elif engagement_reference_score <= 35:
+            reasons.append("内容特征与高互动样本仍有明显差距。")
         return MCPEvidenceSignal(
             score=total_score,
-            sample_count=len(samples),
+            content_fit_score=content_fit_score,
+            engagement_reference_score=engagement_reference_score,
+            goal_alignment_score=goal_alignment_score,
+            sample_count=len(relevant_sample_infos),
+            source_sample_count=len(samples),
             matched_keywords=matched_keywords[:10],
             matched_tags=matched_tags[:10],
+            avg_likes=avg_likes,
+            avg_collects=avg_collects,
+            avg_comments=avg_comments,
+            avg_shares=avg_shares,
+            top_sample_metrics=top_sample_metrics,
             reasons=reasons[:5],
             source_keywords=keywords or ([topic] if topic else []),
         )

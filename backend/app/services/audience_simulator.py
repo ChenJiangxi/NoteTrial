@@ -57,6 +57,38 @@ class AudienceSimulator:
         ]
         return base_personas[:count]
     
+
+    def _build_evidence_context(self, external_evidence: Dict[str, Any] = None) -> str:
+        """Turn MCP evidence into platform background for persona decisions."""
+        if not external_evidence:
+            return ""
+
+        evidence_reasons = external_evidence.get("reasons", [])[:3]
+        evidence_keywords = external_evidence.get("matched_keywords", [])[:5]
+        evidence_tags = external_evidence.get("matched_tags", [])[:5]
+        sample_count = int(external_evidence.get("sample_count", 0) or 0)
+        avg_likes = round(float(external_evidence.get("avg_likes", 0.0) or 0.0))
+        avg_collects = round(float(external_evidence.get("avg_collects", 0.0) or 0.0))
+        avg_comments = round(float(external_evidence.get("avg_comments", 0.0) or 0.0))
+        avg_shares = round(float(external_evidence.get("avg_shares", 0.0) or 0.0))
+        fit_score = float(external_evidence.get("content_fit_score", 0.0) or 0.0)
+        engagement_score = float(external_evidence.get("engagement_reference_score", 0.0) or 0.0)
+        goal_score = float(external_evidence.get("goal_alignment_score", 0.0) or 0.0)
+
+        lines = [
+            "【来自小红书 MCP 的外部参考资料】",
+            f"- 已对比 {sample_count} 条真实小红书样本",
+            f"- 样本平均互动：赞 {avg_likes} / 藏 {avg_collects} / 评 {avg_comments} / 转 {avg_shares}",
+            f"- 内容贴合度参考：{fit_score:.1f}/100",
+            f"- 高互动表现参考：{engagement_score:.1f}/100",
+            f"- 当前目标对齐度：{goal_score:.1f}/100",
+            f"- 命中的关键词：{', '.join(evidence_keywords) if evidence_keywords else '无明显命中'}",
+            f"- 命中的标签：{', '.join(evidence_tags) if evidence_tags else '无明显命中'}",
+        ]
+        lines.extend(f"- {item}" for item in evidence_reasons)
+        lines.append("- 请把这些信息当作你浏览内容时额外知道的平台背景资料，再决定是否互动。")
+        return "\n".join(lines)
+
     def _build_simulation_prompt(
         self, 
         persona: Dict[str, str], 
@@ -76,14 +108,8 @@ class AudienceSimulator:
 
         evidence_context = ""
         if external_evidence:
-            evidence_reasons = external_evidence.get("reasons", [])[:3]
-            evidence_keywords = external_evidence.get("matched_keywords", [])[:5]
-            evidence_score = external_evidence.get("score", 0)
             evidence_context = f"""
-【来自小红书 MCP 的外部证据】
-- 该内容与真实热门样本的贴合度评分: {evidence_score}/100
-- 命中的热门关键词: {', '.join(evidence_keywords) if evidence_keywords else '无明显命中'}
-{chr(10).join(f'- {item}' for item in evidence_reasons)}
+{self._build_evidence_context(external_evidence)}
 """
         
         prompt = f"""你正在模拟一个小红书用户浏览首页的场景。
@@ -101,12 +127,12 @@ class AudienceSimulator:
 【任务】
 作为这个用户画像，决定你对这篇笔记的互动行为。
 
-请输出JSON格式的决策：
+请输出 JSON 格式的决策：
 {{
-    "like": true/false,      // 是否点赞（觉得内容有价值/有共鸣）
-    "save": true/false,      // 是否收藏（内容实用/想之后再看）
-    "comment": true/false,   // 是否评论（想发表看法/提问）
-    "share": true/false,     // 是否分享（想推荐给朋友）
+    "like": true/false,
+    "save": true/false,
+    "comment": true/false,
+    "share": true/false,
     "reasoning": "简短说明你的决策理由（1-2句话）"
 }}
 
@@ -115,10 +141,11 @@ class AudienceSimulator:
 2. 大多数用户对大多数内容不会有太多互动，请保持真实
 3. 收藏行为在小红书上相对常见（如果内容实用）
 4. 评论和分享的门槛较高
-5. 上面的 MCP 证据来自真实平台样本，可以作为外部参考，但不要机械照搬
+5. 上面的 MCP 资料来自真实平台样本，请先参考这些外部资料，再按用户画像做判断
+6. 不要把 MCP 当成额外打分器，而是把它理解成你在做决策时知道的平台背景信息
 """
         return prompt
-    
+
     async def _simulate_single_user(
         self,
         persona: Dict[str, str],
@@ -233,8 +260,8 @@ class AudienceSimulator:
         overall_conf = self._calc_multi_confidence(
             total_users,
             {
-                "A": self._blend_score(score_a.total, (version_evidence or {}).get("A")),
-                "B": self._blend_score(score_b.total, (version_evidence or {}).get("B")),
+                "A": float(score_a.total),
+                "B": float(score_b.total),
             },
         )
         
@@ -249,6 +276,8 @@ class AudienceSimulator:
             all_results_b,
             (version_evidence or {}).get("A"),
             (version_evidence or {}).get("B"),
+            "A",
+            "B",
         )
         loser_label = "A" if score_a.total < score_b.total else "B"
         suggestions = await self._generate_suggestions(
@@ -259,6 +288,8 @@ class AudienceSimulator:
             score_b,
             calibration_hints,
             (version_evidence or {}).get(loser_label),
+            "A",
+            "B",
         )
         
         # 合并persona结果
@@ -360,18 +391,22 @@ class AudienceSimulator:
                     label=label,
                     score=raw_score,
                     evidence_score=float((evidence or {}).get("score", 0.0)),
-                    composite_score=self._blend_score(raw_score.total, evidence),
+                    composite_score=float(raw_score.total),
                     mcp_evidence=evidence,
                 )
             )
-        version_scores_sorted = sorted(version_scores, key=lambda v: v.composite_score, reverse=True)
+        version_scores_sorted = sorted(
+            version_scores,
+            key=lambda v: self._version_sort_key(v, task_spec.goals),
+            reverse=True,
+        )
 
         users = len(next(iter(results_by_label.values()))) if results_by_label else 0
         like_conf = self._calc_multi_confidence(users, {v.label: v.score.like_count for v in version_scores})
         save_conf = self._calc_multi_confidence(users, {v.label: v.score.save_count for v in version_scores})
         comment_conf = self._calc_multi_confidence(users, {v.label: v.score.comment_count for v in version_scores})
         share_conf = self._calc_multi_confidence(users, {v.label: v.score.share_count for v in version_scores})
-        overall_conf = self._calc_multi_confidence(users, {v.label: v.composite_score for v in version_scores})
+        overall_conf = self._calc_multi_confidence(users, {v.label: float(v.score.total) for v in version_scores})
 
         diagnosis: List[str] = []
         suggestions: List[str] = []
@@ -390,6 +425,8 @@ class AudienceSimulator:
                 results_by_label[second.label],
                 (version_evidence or {}).get(top.label),
                 (version_evidence or {}).get(second.label),
+                top.label,
+                second.label,
             )
             suggestions = await self._generate_suggestions(
                 task_spec,
@@ -399,6 +436,8 @@ class AudienceSimulator:
                 second.score,
                 calibration_hints,
                 (version_evidence or {}).get(second.label),
+                top.label,
+                second.label,
             )
 
         return MultiCrowdTestResult(
@@ -428,12 +467,27 @@ class AudienceSimulator:
             share_count=share_count,
             total=like_count + save_count + comment_count + share_count
         )
-    
-    def _blend_score(self, llm_total: float, evidence: Dict[str, Any] = None) -> float:
-        """Combine LLM interactions with MCP evidence for final comparison."""
-        evidence_score = float((evidence or {}).get("score", 0.0))
-        return round(float(llm_total) + evidence_score * 0.2, 2)
 
+    def _version_sort_key(self, version: VersionScore, goals: List[OptimizationGoal] = None) -> tuple:
+        primary_goal = goals[0] if goals else OptimizationGoal.maximize_save
+        primary_goal_value = primary_goal.value if isinstance(primary_goal, OptimizationGoal) else str(primary_goal)
+        goal_metric = {
+            "maximize_like": version.score.like_count,
+            "maximize_save": version.score.save_count,
+            "maximize_comment": version.score.comment_count,
+            "maximize_share": version.score.share_count,
+        }.get(primary_goal_value, version.score.save_count)
+
+        return (
+            float(version.composite_score or 0.0),
+            float(goal_metric),
+            float(version.evidence_score or 0.0),
+            float(version.score.save_count),
+            float(version.score.like_count),
+            float(version.score.comment_count),
+            float(version.score.share_count),
+        )
+    
     def _calc_confidence(self, users: int, vote_a: int, vote_b: int) -> StatisticalConfidence:
         """计算统计置信度 (基于 viral-predictor 的逻辑)"""
         if vote_a == 0 and vote_b == 0:
@@ -512,20 +566,26 @@ class AudienceSimulator:
         results_a: List[PersonaSimulationResult],
         results_b: List[PersonaSimulationResult],
         evidence_a: Dict[str, Any] = None,
-        evidence_b: Dict[str, Any] = None
+        evidence_b: Dict[str, Any] = None,
+        label_a: str = "A",
+        label_b: str = "B"
     ) -> List[str]:
         """生成诊断解释"""
-        winner = "A" if score_a.total > score_b.total else "B"
-        winner_content = content_a if winner == "A" else content_b
-        loser_content = content_b if winner == "A" else content_a
-        winner_score = score_a if winner == "A" else score_b
-        loser_score = score_b if winner == "A" else score_a
+        first_label = label_a or "A"
+        second_label = label_b or "B"
+        first_beats_second = score_a.total >= score_b.total
+        winner_label = first_label if first_beats_second else second_label
+        loser_label = second_label if first_beats_second else first_label
+        winner_content = content_a if first_beats_second else content_b
+        loser_content = content_b if first_beats_second else content_a
+        winner_score = score_a if first_beats_second else score_b
+        loser_score = score_b if first_beats_second else score_a
         
         # 收集用户反馈理由
-        winner_results = results_a if winner == "A" else results_b
+        winner_results = results_a if first_beats_second else results_b
         positive_reasons = [r.reasoning for r in winner_results if r.save or r.like][:3]
-        winner_evidence = evidence_a if winner == "A" else evidence_b
-        loser_evidence_data = evidence_b if winner == "A" else evidence_a
+        winner_evidence = evidence_a if first_beats_second else evidence_b
+        loser_evidence_data = evidence_b if first_beats_second else evidence_a
         
         # 处理多目标
         goals_str = ', '.join([g.value for g in task_spec.goals]) if task_spec.goals else 'maximize_save'
@@ -536,12 +596,12 @@ class AudienceSimulator:
 受众：{task_spec.audience}
 优化目标：{goals_str}
 
-【胜出版本{winner}】
+【胜出版本（{winner_label}）】
 标题：{winner_content.title}
 正文前100字：{winner_content.body[:100]}...
 分数：点赞{winner_score.like_count} 收藏{winner_score.save_count} 评论{winner_score.comment_count}
 
-【落后版本】
+【落后版本（{loser_label}）】
 标题：{loser_content.title}
 正文前100字：{loser_content.body[:100]}...
 分数：点赞{loser_score.like_count} 收藏{loser_score.save_count} 评论{loser_score.comment_count}
@@ -564,7 +624,7 @@ class AudienceSimulator:
 }}
 
 要求：
-1. 解释为什么版本{winner}更受欢迎
+1. 解释为什么版本{winner_label}更受欢迎
 2. 具体指出内容层面的差异
 3. 与小红书平台特性结合
 """
@@ -588,11 +648,16 @@ class AudienceSimulator:
         score_a: EngagementScore,
         score_b: EngagementScore,
         calibration_hints: List[str] = None,
-        loser_evidence: Dict[str, Any] = None
+        loser_evidence: Dict[str, Any] = None,
+        label_a: str = "A",
+        label_b: str = "B"
     ) -> List[str]:
         """生成改写建议"""
-        loser = "A" if score_a.total < score_b.total else "B"
-        loser_content = content_a if loser == "A" else content_b
+        first_label = label_a or "A"
+        second_label = label_b or "B"
+        loser_is_first = score_a.total < score_b.total
+        loser_label = first_label if loser_is_first else second_label
+        loser_content = content_a if loser_is_first else content_b
         
         calibration_context = ""
         if calibration_hints:
@@ -612,7 +677,7 @@ class AudienceSimulator:
         
         prompt = f"""为以下小红书内容提供具体的改写建议。
 
-【内容】
+【待优化的版本（{loser_label}）】
 标题：{loser_content.title}
 正文：{loser_content.body}
 
@@ -642,12 +707,12 @@ class AudienceSimulator:
             
             suggestions = []
             if result.get("title_suggestions"):
-                suggestions.append(f"📝 标题建议：{' | '.join(result['title_suggestions'])}")
+                suggestions.append(f"标题建议：{' | '.join(result['title_suggestions'])}")
             if result.get("hook_suggestions"):
-                suggestions.append(f"🎣 开头Hook：{' | '.join(result['hook_suggestions'])}")
+                suggestions.append(f"开头 Hook 建议：{' | '.join(result['hook_suggestions'])}")
             if result.get("structure_suggestions"):
                 for s in result['structure_suggestions']:
-                    suggestions.append(f"📋 {s}")
+                    suggestions.append(f"结构优化：{s}")
             
             return suggestions
         except Exception as e:

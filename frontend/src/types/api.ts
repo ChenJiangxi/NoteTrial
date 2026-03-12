@@ -96,9 +96,18 @@ export interface StatisticalConfidence {
 
 export interface MCPEvidenceSignal {
   score: number
+  content_fit_score?: number
+  engagement_reference_score?: number
+  goal_alignment_score?: number
   sample_count: number
+  source_sample_count?: number
   matched_keywords: string[]
   matched_tags: string[]
+  avg_likes?: number
+  avg_collects?: number
+  avg_comments?: number
+  avg_shares?: number
+  top_sample_metrics?: Record<string, number>
   reasons: string[]
   source_keywords: string[]
 }

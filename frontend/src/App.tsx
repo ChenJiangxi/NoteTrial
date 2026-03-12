@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { 
   Zap, Send, Loader2, Sparkles, Play, Image as ImageIcon, Wand2,
   Paperclip, X, FileText, Upload, Plus,
-  Layout, Smartphone, ChevronRight, UserCircle2, BarChart3, GripVertical, Home,
+  Layout, Smartphone, ChevronRight, BarChart3, GripVertical, Home,
   ChevronLeft, ListPlus
 } from 'lucide-react'
 import { useApp } from './contexts/AppContext'
@@ -10,6 +10,7 @@ import { healthCheck, sendChatMessage, generateVariant, startCrowdTest, getCrowd
 import type { ContentItem, MultiCrowdTestResult, PageImage } from './types/api'
 import WelcomePage from './components/WelcomePage'
 import AutoModePage from './components/AutoModePage'
+import CrowdTestResultPanel from './components/CrowdTestResultPanel'
 
 // 应用模式类型
 type AppMode = 'welcome' | 'interactive' | 'auto'
@@ -870,7 +871,7 @@ function App() {
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#ff2442] text-white text-sm font-medium rounded-lg hover:bg-[#e61f3d] shadow-sm shadow-red-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isRunningTest ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
-                  {isRunningTest ? `模拟测试中 ${simulationProgress}%` : '运行 A/B 测试'}
+                  {isRunningTest ? `模拟测试中 ${simulationProgress}%` : '版本效果评估'}
                 </button>
                 {isRunningTest && (
                   <div className="mt-2 h-2 w-full bg-red-100 rounded-full overflow-hidden">
@@ -883,7 +884,7 @@ function App() {
               </div>
 
               {testResult ? (
-                <TestResultPanel result={testResult} />
+                <CrowdTestResultPanel result={testResult} />
               ) : (
                 !isRunningTest && (
                   <div className="flex flex-col items-center justify-center text-center py-10 opacity-40">
@@ -1562,114 +1563,6 @@ function ImageSearchPanel({ onSelect, query }: { onSelect: (url: string) => void
           </button>
         </div>
       )}
-    </div>
-  )
-}
-
-function TestResultPanel({ result }: { result: MultiCrowdTestResult }) {
-  const versionA = result.version_scores.find(v => v.label === 'Version A')
-  const versionB = result.version_scores.find(v => v.label === 'Version B')
-  const scoreA = versionA?.score ?? { like_count: 0, save_count: 0, comment_count: 0, share_count: 0, total: 0 }
-  const scoreB = versionB?.score ?? { like_count: 0, save_count: 0, comment_count: 0, share_count: 0, total: 0 }
-
-  return (
-    <div className="space-y-6">
-      <div className="bg-gradient-to-br from-[#ff2442] to-[#e61f3d] rounded-xl p-4 text-white shadow-md shadow-red-200">
-        <div className="flex items-center gap-2 mb-2 opacity-90">
-          <Sparkles className="w-4 h-4 text-white" />
-          <span className="text-xs font-bold uppercase tracking-wide">获胜版本</span>
-        </div>
-        <div className="text-2xl font-bold mb-1">
-          {result.overall_confidence.winner === '-' ? '结果接近' : result.overall_confidence.winner}
-        </div>
-        <div className="text-xs opacity-80 leading-relaxed">
-          综合表现置信度 {result.overall_confidence.confidence.toFixed(0)}%
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
-          <BarChart3 className="w-3 h-3" /> 数据对比
-        </h4>
-        {versionA && versionB && (
-          <>
-            <StatBar label="点赞数 (Likes)" scoreA={scoreA.like_count} scoreB={scoreB.like_count} totalUsers={result.persona_results.length} />
-            <StatBar label="收藏数 (Saves)" scoreA={scoreA.save_count} scoreB={scoreB.save_count} totalUsers={result.persona_results.length} />
-            <StatBar label="评论数 (Comments)" scoreA={scoreA.comment_count} scoreB={scoreB.comment_count} totalUsers={result.persona_results.length} />
-            <StatBar label="分享数 (Shares)" scoreA={scoreA.share_count} scoreB={scoreB.share_count} totalUsers={result.persona_results.length} />
-          </>
-        )}
-        <div className="space-y-2">
-          {result.version_scores.map((version, index) => (
-            <div key={version.label} className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-xs text-slate-600">
-              <div className="flex items-center justify-between mb-1">
-                <div className="font-medium text-slate-700">{index + 1}. {version.label}</div>
-                <div className="text-slate-500">综合分 {(version.composite_score ?? 0).toFixed(1)}</div>
-              </div>
-              <div>互动总分 {version.score.total} · MCP 证据分 {(version.evidence_score ?? 0).toFixed(1)}</div>
-              <div className="mt-1 text-slate-500">{version.mcp_evidence?.reasons?.[0] || '暂无外部证据说明'}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <h4 className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">
-          <UserCircle2 className="w-3 h-3" /> 模拟用户反馈
-        </h4>
-        <div className="space-y-3">
-          {result.suggestions.slice(0, 2).map((s, i) => (
-            <div key={i} className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[10px] text-slate-500 font-bold">U{i + 1}</div>
-                <span className="text-slate-400 scale-75">simulated</span>
-              </div>
-              <p className="text-slate-600 leading-normal">{s}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
-        <h4 className="text-xs font-semibold text-amber-700 mb-1">结果诊断</h4>
-        <ul className="list-disc pl-4 space-y-1">
-          {result.diagnosis.slice(0, 3).map((d, i) => (
-            <li key={i} className="text-xs text-amber-700 leading-normal">{d}</li>
-          ))}
-        </ul>
-      </div>
-    </div>
-  )
-}
-
-function StatBar({ label, scoreA, scoreB, totalUsers }: { label: string, scoreA: number, scoreB: number, totalUsers: number }) {
-  const base = Math.max(totalUsers, 1)
-  const pA = (scoreA / base) * 100
-  const pB = (scoreB / base) * 100
-  
-  return (
-    <div className="bg-white border focus-within:ring-1 border-slate-100 rounded-lg p-3 shadow-sm">
-      <div className="flex justify-between mb-2">
-        <span className="text-xs font-medium text-slate-500">{label}</span>
-      </div>
-      <div className="space-y-2">
-        {/* A Version */}
-        <div className="flex items-center gap-2">
-           <span className="text-[10px] w-3 text-blue-500 font-bold">A</span>
-           <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-             <div style={{ width: `${pA}%` }} className="h-full bg-blue-500 rounded-full" />
-           </div>
-           <span className="text-[10px] w-10 text-blue-600 text-right">{pA.toFixed(0)}%</span>
-        </div>
-        {/* B Version */}
-        <div className="flex items-center gap-2">
-           <span className="text-[10px] w-3 text-[#ff2442] font-bold">B</span>
-           <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-             <div style={{ width: `${pB}%` }} className="h-full bg-[#ff2442] rounded-full" />
-           </div>
-           <span className="text-[10px] w-10 text-[#ff2442] font-bold text-right">{pB.toFixed(0)}%</span>
-        </div>
-      </div>
     </div>
   )
 }
